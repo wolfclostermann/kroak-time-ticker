@@ -107,7 +107,10 @@ pub fn discover_data_dir() -> Option<PathBuf> {
 
     // Prefer a directory that already has the database or settings file.
     for candidate in &candidates {
-        if candidate.join("openkj.sqlite").exists() || candidate.join("openkj2.ini").exists() {
+        if candidate.join("openkj.sqlite").exists()
+            || candidate.join("openkj.ini").exists()
+            || candidate.join("openkj2.ini").exists()
+        {
             return Some(candidate.clone());
         }
     }

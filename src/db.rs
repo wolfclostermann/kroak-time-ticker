@@ -29,7 +29,7 @@ pub struct KaraokeState {
 /// Read `currentRotationPosition` from the OpenKJ INI file.
 /// Qt writes top-level keys under a `[General]` section in its INI format.
 pub fn read_current_singer_id(data_dir: &Path) -> Option<i64> {
-    for ini_name in &["openkj2.ini", "openkj2-unstable.ini"] {
+    for ini_name in &["openkj.ini", "openkj2.ini", "openkj2-unstable.ini"] {
         let path = data_dir.join(ini_name);
         tracing::debug!(path = %path.display(), "INI: checking");
         let content = match std::fs::read_to_string(&path) {
