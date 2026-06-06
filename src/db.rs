@@ -131,23 +131,69 @@ pub fn query_state(data_dir: &Path, singer_count: usize) -> Result<KaraokeState>
     // for the current singer is still present in their unplayed queue.
     let is_playing = match (&current_singer, current_singer_id) {
         (Some(singer), Some(singer_id)) => {
-            let count: i64 = conn
-                .query_row(
-                    "SELECT COUNT(*) \
-                     FROM (SELECT songid FROM historySongs \
-                           WHERE historySinger = ?1 \
-                           ORDER BY lastplay DESC LIMIT 1) recent \
-                     JOIN queuesongs q \
-                       ON q.song = recent.songid \
-                      AND q.singer = ?2 \
-                      AND q.played = 0",
-                    rusqlite::params![singer.name, singer_id],
-                    |row| row.get(0),
-                )
-                .unwrap_or(0);
-            count > 0
+            tracing::debug!(
+                singer_name = %singer.name,
+                singer_id,
+                "is_playing: checking historySongs"
+            );
+
+            // Step 1: most recent history entry for this singer.
+            let recent = conn.query_row(
+                "SELECT songid, lastplay FROM historySongs \
+                 WHERE historySinger = ?1 \
+                 ORDER BY lastplay DESC LIMIT 1",
+                rusqlite::params![singer.name],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+            );
+
+            match recent {
+                Ok((recent_song_id, ref lastplay)) => {
+                    tracing::debug!(
+                        singer_name = %singer.name,
+                        recent_song_id,
+                        lastplay = %lastplay,
+                        "is_playing: found historySongs entry"
+                    );
+
+                    // Step 2: is that song still unplayed in their queue?
+                    let unplayed: i64 = conn
+                        .query_row(
+                            "SELECT COUNT(*) FROM queuesongs \
+                             WHERE song = ?1 AND singer = ?2 AND played = 0",
+                            rusqlite::params![recent_song_id, singer_id],
+                            |row| row.get(0),
+                        )
+                        .unwrap_or(0);
+
+                    tracing::debug!(
+                        singer_name = %singer.name,
+                        recent_song_id,
+                        unplayed_count = unplayed,
+                        "is_playing: unplayed queuesongs for recent song"
+                    );
+
+                    let playing = unplayed > 0;
+                    tracing::info!(
+                        singer_name = %singer.name,
+                        is_playing = playing,
+                        "playback state"
+                    );
+                    playing
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        singer_name = %singer.name,
+                        error = %e,
+                        "is_playing: historySongs query failed (no history yet?)"
+                    );
+                    false
+                }
+            }
         }
-        _ => false,
+        _ => {
+            tracing::debug!("is_playing: no current singer — skipping");
+            false
+        }
     };
 
     let next_up = match current_idx {
