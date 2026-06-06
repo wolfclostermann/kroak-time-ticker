@@ -31,9 +31,15 @@ pub struct KaraokeState {
 pub fn read_current_singer_id(data_dir: &Path) -> Option<i64> {
     for ini_name in &["openkj2.ini", "openkj2-unstable.ini"] {
         let path = data_dir.join(ini_name);
-        let Ok(content) = std::fs::read_to_string(&path) else {
-            continue;
+        tracing::debug!(path = %path.display(), "INI: checking");
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::debug!(path = %path.display(), error = %e, "INI: not readable");
+                continue;
+            }
         };
+        tracing::debug!(path = %path.display(), "INI: found, scanning for currentRotationPosition");
         for line in content.lines() {
             let line = line.trim();
             let parts: Vec<&str> = line.splitn(2, '=').collect();
@@ -42,12 +48,18 @@ pub fn read_current_singer_id(data_dir: &Path) -> Option<i64> {
                     .trim()
                     .eq_ignore_ascii_case("currentRotationPosition")
             {
-                if let Ok(id) = parts[1].trim().parse::<i64>() {
+                let raw = parts[1].trim();
+                tracing::debug!(raw, "INI: found currentRotationPosition");
+                if let Ok(id) = raw.parse::<i64>() {
                     return Some(id);
+                } else {
+                    tracing::debug!(raw, "INI: could not parse value as integer");
                 }
             }
         }
+        tracing::debug!(path = %path.display(), "INI: key not found in file");
     }
+    tracing::debug!(data_dir = %data_dir.display(), "INI: currentRotationPosition not found in any file");
     None
 }
 
@@ -75,6 +87,7 @@ pub fn query_state(data_dir: &Path, singer_count: usize) -> Result<KaraokeState>
     conn.busy_timeout(std::time::Duration::from_millis(500))?;
 
     let current_singer_id = read_current_singer_id(data_dir);
+    tracing::debug!(current_singer_id = ?current_singer_id, "rotation: current singer ID from INI");
 
     // Load all singers in rotation order.
     let mut stmt = conn
@@ -124,6 +137,12 @@ pub fn query_state(data_dir: &Path, singer_count: usize) -> Result<KaraokeState>
             is_current,
         });
     }
+
+    tracing::debug!(
+        singer_ids = ?singer_rows.iter().map(|(id, name)| format!("{id}={name}")).collect::<Vec<_>>(),
+        current_idx = ?current_idx,
+        "rotation: singers loaded"
+    );
 
     let current_singer = current_idx.map(|i| rotation[i].clone());
 
@@ -191,7 +210,11 @@ pub fn query_state(data_dir: &Path, singer_count: usize) -> Result<KaraokeState>
             }
         }
         _ => {
-            tracing::debug!("is_playing: no current singer — skipping");
+            tracing::debug!(
+                current_singer_id = ?current_singer_id,
+                has_current_singer = current_singer.is_some(),
+                "is_playing: no current singer — skipping"
+            );
             false
         }
     };
