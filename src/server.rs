@@ -18,8 +18,15 @@ use tower_http::cors::CorsLayer;
 type SharedState = Arc<RwLock<Option<KaraokeState>>>;
 
 const TICKER_HTML: &str = include_str!("static/ticker.html");
-const LIST_HTML: &str = include_str!("static/list.html");
+const LIST_HTML:   &str = include_str!("static/list.html");
 const SCROLL_HTML: &str = include_str!("static/scroll.html");
+
+fn render_scroll_html(cfg: &crate::config::ScrollConfig) -> String {
+    SCROLL_HTML.replace(
+        "__SCROLL_CFG__",
+        &serde_json::to_string(cfg).expect("ScrollConfig is always serializable"),
+    )
+}
 
 pub async fn run(cfg: Config) -> Result<()> {
     let shared: SharedState = Arc::new(RwLock::new(None));
@@ -44,10 +51,17 @@ pub async fn run(cfg: Config) -> Result<()> {
         }
     });
 
+    // Pre-render scroll HTML once with the config baked in.
+    let scroll_html = Arc::new(render_scroll_html(&cfg.scroll));
+    let scroll_html_route = scroll_html.clone();
+
     let app = Router::new()
         .route("/", get(list_handler))
         .route("/ticker", get(ticker_handler))
-        .route("/scroll", get(scroll_handler))
+        .route("/scroll", get(move || {
+            let html = scroll_html_route.clone();
+            async move { Html((*html).clone()) }
+        }))
         .route("/api/state", get(api_state_handler))
         .layer(CorsLayer::permissive())
         .with_state(shared);
@@ -98,9 +112,6 @@ async fn list_handler() -> impl IntoResponse {
     Html(LIST_HTML)
 }
 
-async fn scroll_handler() -> impl IntoResponse {
-    Html(SCROLL_HTML)
-}
 
 async fn api_state_handler(State(state): State<SharedState>) -> impl IntoResponse {
     match state.read().unwrap().clone() {

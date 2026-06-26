@@ -9,6 +9,9 @@ pub struct Config {
 
     #[serde(default)]
     pub ticker: TickerConfig,
+
+    #[serde(default)]
+    pub scroll: ScrollConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -54,6 +57,77 @@ impl Default for TickerConfig {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ScrollConfig {
+    /// Banner height in pixels.
+    #[serde(default = "default_scroll_height")]
+    pub height: u32,
+
+    /// Banner background — any CSS color value.
+    #[serde(default = "default_scroll_bg")]
+    pub bg: String,
+
+    /// Font family.
+    #[serde(default = "default_scroll_font")]
+    pub font: String,
+
+    /// Font size in pixels.
+    #[serde(default = "default_scroll_size")]
+    pub size: u32,
+
+    /// Scroll speed in pixels per second.
+    #[serde(default = "default_scroll_speed")]
+    pub speed: u32,
+
+    #[serde(default = "default_color_now")]
+    pub color_now: String,
+
+    #[serde(default = "default_color_next")]
+    pub color_next: String,
+
+    #[serde(default = "default_color_up")]
+    pub color_up: String,
+
+    #[serde(default = "default_color_singer")]
+    pub color_singer: String,
+
+    #[serde(default = "default_color_song")]
+    pub color_song: String,
+
+    #[serde(default = "default_color_artist")]
+    pub color_artist: String,
+}
+
+impl Default for ScrollConfig {
+    fn default() -> Self {
+        Self {
+            height:       default_scroll_height(),
+            bg:           default_scroll_bg(),
+            font:         default_scroll_font(),
+            size:         default_scroll_size(),
+            speed:        default_scroll_speed(),
+            color_now:    default_color_now(),
+            color_next:   default_color_next(),
+            color_up:     default_color_up(),
+            color_singer: default_color_singer(),
+            color_song:   default_color_song(),
+            color_artist: default_color_artist(),
+        }
+    }
+}
+
+fn default_scroll_height() -> u32  { 80 }
+fn default_scroll_bg()     -> String { "rgba(8,8,12,0.90)".into() }
+fn default_scroll_font()   -> String { "Segoe UI, Helvetica Neue, Arial, sans-serif".into() }
+fn default_scroll_size()   -> u32  { 32 }
+fn default_scroll_speed()  -> u32  { 120 }
+fn default_color_now()     -> String { "#ffd44f".into() }
+fn default_color_next()    -> String { "#5bc8ff".into() }
+fn default_color_up()      -> String { "#aaa".into() }
+fn default_color_singer()  -> String { "#fff".into() }
+fn default_color_song()    -> String { "#ddd".into() }
+fn default_color_artist()  -> String { "#aaa".into() }
+
 fn default_port() -> u16 {
     8080
 }
@@ -85,6 +159,7 @@ impl Config {
             let cfg = Config {
                 server: ServerConfig::default(),
                 ticker: TickerConfig::default(),
+                scroll: ScrollConfig::default(),
             };
             cfg.save(path)?;
             Ok(cfg)

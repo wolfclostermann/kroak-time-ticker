@@ -60,7 +60,6 @@
     transform: translateY(-50%);
     white-space: nowrap;
     will-change: transform;
-    padding-right: 80px; /* gap between loop copies */
   }
 
   .seg {
@@ -175,22 +174,27 @@
 
   // ── Content update ────────────────────────────────────────────────────────
 
+  const GAP = '<span style="display:inline-block;width:80px"></span>';
+
   function updateContent() {
     const html = buildContent(state);
-    // Duplicate so we can loop seamlessly.
-    track.innerHTML = html + html;
+    track.innerHTML = html + GAP + html + GAP;
     pendingLayout = true;
+    lastTs        = null;
   }
 
   // ── Animation loop ────────────────────────────────────────────────────────
 
   function animate(ts) {
     if (pendingLayout) {
-      // Measure after the browser has rendered the new HTML.
-      halfWidth    = track.scrollWidth / 2;
+      const oldHalf = halfWidth;
+      halfWidth     = track.scrollWidth / 2;
       pendingLayout = false;
-      // Keep scrollX within bounds after a content change.
-      if (halfWidth > 0 && scrollX >= halfWidth) scrollX %= halfWidth;
+      if (oldHalf > 0 && halfWidth > 0) {
+        scrollX = (scrollX % oldHalf) / oldHalf * halfWidth;
+      } else if (halfWidth > 0 && scrollX >= halfWidth) {
+        scrollX %= halfWidth;
+      }
     }
 
     if (lastTs !== null && halfWidth > 0) {

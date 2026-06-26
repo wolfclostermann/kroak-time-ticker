@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <title>kroak-time Scroll</title>
+<!-- Visual properties are set via the [scroll] section of kroak-time-ticker.toml. -->
 <style>
   *, *::before, *::after {
     box-sizing: border-box;
@@ -17,39 +18,12 @@
     overflow: hidden;
   }
 
-  /* Banner anchored to the bottom of the 1080p canvas */
   .scroll-container {
     position: absolute;
     bottom: 0;
     left: 0;
     width: 1920px;
-    height: 90px;
-    display: flex;
-    align-items: stretch;
-    font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
-    font-size: 32px;
-  }
-
-  .scroll-badge {
-    background: #b00020;
-    color: #fff;
-    font-weight: 800;
-    letter-spacing: 0.08em;
-    padding: 0 28px;
-    display: flex;
-    align-items: center;
-    flex-shrink: 0;
-    white-space: nowrap;
-    text-transform: uppercase;
-    font-size: 0.65em;
-    border-right: 4px solid #ff304f;
-  }
-
-  .scroll-body {
-    background: rgba(8, 8, 12, 0.90);
-    flex: 1;
     overflow: hidden;
-    position: relative;
   }
 
   #scroll-track {
@@ -59,42 +33,49 @@
     transform: translateY(-50%);
     white-space: nowrap;
     will-change: transform;
-    padding-right: 120px; /* gap between loop copies */
   }
 
-  .seg {
-    display: inline-block;
-    padding: 0 40px;
-  }
-
-  .lbl-now  { color: #ffd44f; font-weight: 700; margin-right: 8px; }
-  .lbl-next { color: #5bc8ff; font-weight: 700; margin-right: 8px; }
-  .lbl-up   { color: #aaa;    font-weight: 700; margin-right: 8px; }
-
-  .singer-name { color: #fff; font-weight: 600; }
-  .song-title  { color: #ddd; font-style: italic; }
-  .song-artist { color: #aaa; }
-
-  .dot  { color: #555; margin: 0 10px; }
-  .pipe { color: #333; margin: 0 6px; }
-
-  .up-entry { color: #bbb; }
-  .up-num   { color: #666; margin-right: 6px; }
+  .seg        { display: inline-block; padding: 0 40px; }
+  .lbl-now    { font-weight: 700; margin-right: 8px; }
+  .lbl-next   { font-weight: 700; margin-right: 8px; }
+  .lbl-up     { font-weight: 700; margin-right: 8px; }
+  .singer-name{ font-weight: 600; }
+  .song-title { font-style: italic; }
+  .dot        { color: #555; margin: 0 10px; }
+  .pipe       { color: #333; margin: 0 6px; }
+  .up-num     { color: #666; margin-right: 6px; }
 </style>
 </head>
 <body>
-<div class="scroll-container">
-  <div class="scroll-badge">KARAOKE</div>
-  <div class="scroll-body">
-    <div id="scroll-track">Starting...</div>
-  </div>
+<div class="scroll-container" id="container">
+  <div id="scroll-track">Starting...</div>
 </div>
 
 <script>
-  const SCROLL_PPS = 120;   // pixels per second — faster for 1920px canvas
-  const FETCH_MS   = 1500;
+  // ── Config (injected from kroak-time-ticker.toml [scroll] at server startup) ──
+  const cfg = __SCROLL_CFG__;
 
-  const track = document.getElementById('scroll-track');
+  // Apply layout/style from config.
+  const container = document.getElementById('container');
+  container.style.height     = cfg.height + 'px';
+  container.style.background = cfg.bg;
+  container.style.fontFamily = cfg.font;
+  container.style.fontSize   = cfg.size + 'px';
+
+  // Inject color rules so the class rules pick them up.
+  document.head.insertAdjacentHTML('beforeend', `<style>
+    .lbl-now    { color: ${cfg.color_now};    }
+    .lbl-next   { color: ${cfg.color_next};   }
+    .lbl-up     { color: ${cfg.color_up};     }
+    .singer-name{ color: ${cfg.color_singer}; }
+    .song-title { color: ${cfg.color_song};   }
+    .song-artist{ color: ${cfg.color_artist}; }
+    .up-entry   { color: ${cfg.color_artist}; }
+  </style>`);
+
+  // ── Scroll state ──────────────────────────────────────────────────────────
+  const FETCH_MS = 1500;
+  const track    = document.getElementById('scroll-track');
 
   let scrollX       = 0;
   let halfWidth     = 0;
@@ -102,6 +83,7 @@
   let pendingLayout = false;
   let state         = null;
 
+  // ── HTML builder ──────────────────────────────────────────────────────────
   function esc(s) {
     return String(s || '')
       .replace(/&/g, '&amp;')
@@ -126,7 +108,7 @@
       return '<span class="seg" style="color:#666">No singers in rotation</span>';
     }
 
-    const parts = [];
+    const parts     = [];
     const skipNames = new Set();
 
     if (s.is_playing && s.current_singer) {
@@ -147,7 +129,7 @@
       skipNames.add(nextSinger.name);
     }
 
-    const rest = s.rotation.filter(r => !skipNames.has(r.name));
+    const rest  = s.rotation.filter(r => !skipNames.has(r.name));
     const shown = rest.slice(0, Math.max(0, (s.singer_count || 8) - skipNames.size));
 
     if (shown.length > 0) {
@@ -167,22 +149,35 @@
     return parts.join('<span class="pipe">◆</span>');
   }
 
+  // ── Content update ────────────────────────────────────────────────────────
+  const GAP = '<span style="display:inline-block;width:120px"></span>';
+
   function updateContent() {
     const html = buildContent(state);
-    track.innerHTML = html + html;
+    // Each copy carries its own trailing gap so halfWidth lands exactly at
+    // the start of copy 2, making the loop reset pixel-perfect.
+    track.innerHTML = html + GAP + html + GAP;
     pendingLayout = true;
+    lastTs        = null; // discard the frame that includes reflow time
   }
 
+  // ── Animation loop ────────────────────────────────────────────────────────
   function animate(ts) {
     if (pendingLayout) {
+      const oldHalf = halfWidth;
       halfWidth     = track.scrollWidth / 2;
       pendingLayout = false;
-      if (halfWidth > 0 && scrollX >= halfWidth) scrollX %= halfWidth;
+      // Remap scrollX proportionally so position within the loop is preserved.
+      if (oldHalf > 0 && halfWidth > 0) {
+        scrollX = (scrollX % oldHalf) / oldHalf * halfWidth;
+      } else if (halfWidth > 0 && scrollX >= halfWidth) {
+        scrollX %= halfWidth;
+      }
     }
 
     if (lastTs !== null && halfWidth > 0) {
       const delta = (ts - lastTs) / 1000;
-      scrollX += SCROLL_PPS * delta;
+      scrollX += cfg.speed * delta;
       if (scrollX >= halfWidth) scrollX -= halfWidth;
       track.style.transform = `translateY(-50%) translateX(${-scrollX}px)`;
     }
@@ -191,9 +186,10 @@
     requestAnimationFrame(animate);
   }
 
+  // ── Data fetching ─────────────────────────────────────────────────────────
   async function fetchState() {
     try {
-      const r = await fetch('/api/state');
+      const r    = await fetch('/api/state');
       const next = await r.json();
       if (JSON.stringify(next) !== JSON.stringify(state)) {
         state = next;
