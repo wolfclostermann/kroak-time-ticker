@@ -36,14 +36,16 @@
   }
 
   .seg        { display: inline-block; padding: 0 40px; }
-  .lbl-now    { font-weight: 700; margin-right: 8px; }
-  .lbl-next   { font-weight: 700; margin-right: 8px; }
-  .lbl-up     { font-weight: 700; margin-right: 8px; }
+  .lbl-now    { font-weight: 700; margin-right: 14px; }
+  .lbl-next   { font-weight: 700; margin-right: 14px; }
+  .lbl-up     { font-weight: 700; margin-right: 14px; }
   .singer-name{ font-weight: 600; }
   .song-title { font-style: italic; }
   .dot        { color: #555; margin: 0 10px; }
   .pipe       { color: #333; margin: 0 6px; }
   .up-num     { color: #666; margin-right: 6px; }
+  .up-singer  { font-weight: 600; }
+  .up-song    { font-style: italic; font-size: 0.85em; margin-left: 12px; }
 </style>
 </head>
 <body>
@@ -70,7 +72,8 @@
     .singer-name{ color: ${cfg.color_singer}; }
     .song-title { color: ${cfg.color_song};   }
     .song-artist{ color: ${cfg.color_artist}; }
-    .up-entry   { color: ${cfg.color_artist}; }
+    .up-singer  { color: ${cfg.color_singer}; }
+    .up-song    { color: ${cfg.color_artist}; }
   </style>`);
 
   // ── Scroll state ──────────────────────────────────────────────────────────
@@ -135,15 +138,14 @@
     if (shown.length > 0) {
       const entries = shown.map((r, i) => {
         const num  = i + skipNames.size + 1;
-        let   html = `<span class="up-num">${num}.</span><span class="up-entry">${esc(r.name)}`;
+        let   html = `<span class="up-num">${num}.</span><span class="up-singer">${esc(r.name)}</span>`;
         if (r.next_song_title) {
-          html += ` <span class="song-title">${esc(r.next_song_title)}</span>`;
+          html += `<span class="up-song">${esc(r.next_song_title)}</span>`;
         }
-        html += '</span>';
         return html;
       }).join('<span class="pipe">  </span>');
 
-      parts.push(`<span class="seg"><span class="lbl-up">UP NEXT</span>${entries}</span>`);
+      parts.push(`<span class="seg"><span class="lbl-up">THEN</span>${entries}</span>`);
     }
 
     return parts.join('<span class="pipe">◆</span>');
