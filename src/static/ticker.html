@@ -78,8 +78,9 @@
   .dot  { color: #555; margin: 0 8px; }
   .pipe { color: #333; margin: 0 4px; }
 
-  .up-entry { color: #bbb; }
-  .up-num   { color: #666; margin-right: 4px; }
+  .up-num    { color: #666; margin-right: 4px; }
+  .up-singer { color: #fff; font-weight: 600; }
+  .up-song   { color: #888; font-style: italic; font-size: 0.85em; margin-left: 4px; }
 </style>
 </head>
 <body>
@@ -158,15 +159,14 @@
     if (shown.length > 0) {
       const entries = shown.map((r, i) => {
         const num  = i + skipNames.size + 1;
-        let   html = `<span class="up-num">${num}.</span><span class="up-entry">${esc(r.name)}`;
+        let   html = `<span class="up-num">${num}.</span><span class="up-singer">${esc(r.name)}</span>`;
         if (r.next_song_title) {
-          html += ` <span class="song-title">${esc(r.next_song_title)}</span>`;
+          html += `<span class="up-song">${esc(r.next_song_title)}</span>`;
         }
-        html += '</span>';
         return html;
       }).join('<span class="pipe">  </span>');
 
-      parts.push(`<span class="seg"><span class="lbl-up">UP NEXT</span>${entries}</span>`);
+      parts.push(`<span class="seg"><span class="lbl-up">THEN</span>${entries}</span>`);
     }
 
     return parts.join('<span class="pipe">◆</span>');
