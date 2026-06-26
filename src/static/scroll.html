@@ -54,8 +54,9 @@
 </div>
 
 <script>
-  // ── Config (injected from kroak-time-ticker.toml [scroll] at server startup) ──
-  const cfg = __SCROLL_CFG__;
+  // ── Config (injected from kroak-time-ticker.toml at server startup) ──
+  const cfg        = __SCROLL_CFG__;
+  const TICKER_CFG = __TICKER_CFG__;
 
   // Apply layout/style from config.
   const container = document.getElementById('container');
@@ -124,7 +125,7 @@
     }
 
     const nextSinger = s.is_playing ? s.next_up : s.current_singer;
-    if (nextSinger && !skipNames.has(nextSinger.name)) {
+    if (nextSinger && !skipNames.has(nextSinger.name) && (TICKER_CFG.show_empty_singers || nextSinger.next_song_title)) {
       parts.push(
         `<span class="seg"><span class="lbl-next">NEXT</span>` +
         `<span class="singer-name">${esc(nextSinger.name)}</span>${songHtml(nextSinger)}</span>`
@@ -132,7 +133,7 @@
       skipNames.add(nextSinger.name);
     }
 
-    const rest  = s.rotation.filter(r => !skipNames.has(r.name));
+    const rest  = s.rotation.filter(r => !skipNames.has(r.name) && (TICKER_CFG.show_empty_singers || r.next_song_title));
     const shown = rest.slice(0, Math.max(0, (s.singer_count || 8) - skipNames.size));
 
     if (shown.length > 0) {

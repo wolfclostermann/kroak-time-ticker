@@ -21,10 +21,23 @@ const TICKER_HTML: &str = include_str!("static/ticker.html");
 const LIST_HTML:   &str = include_str!("static/list.html");
 const SCROLL_HTML: &str = include_str!("static/scroll.html");
 
-fn render_scroll_html(cfg: &crate::config::ScrollConfig) -> String {
-    SCROLL_HTML.replace(
-        "__SCROLL_CFG__",
-        &serde_json::to_string(cfg).expect("ScrollConfig is always serializable"),
+fn render_scroll_html(scroll_cfg: &crate::config::ScrollConfig, ticker_cfg: &crate::config::TickerConfig) -> String {
+    SCROLL_HTML
+        .replace("__SCROLL_CFG__", &serde_json::to_string(scroll_cfg).expect("ScrollConfig is always serializable"))
+        .replace("__TICKER_CFG__", &serde_json::to_string(ticker_cfg).expect("TickerConfig is always serializable"))
+}
+
+fn render_ticker_html(cfg: &crate::config::TickerConfig) -> String {
+    TICKER_HTML.replace(
+        "__TICKER_CFG__",
+        &serde_json::to_string(cfg).expect("TickerConfig is always serializable"),
+    )
+}
+
+fn render_list_html(cfg: &crate::config::TickerConfig) -> String {
+    LIST_HTML.replace(
+        "__TICKER_CFG__",
+        &serde_json::to_string(cfg).expect("TickerConfig is always serializable"),
     )
 }
 
@@ -51,13 +64,25 @@ pub async fn run(cfg: Config) -> Result<()> {
         }
     });
 
-    // Pre-render scroll HTML once with the config baked in.
-    let scroll_html = Arc::new(render_scroll_html(&cfg.scroll));
+    // Pre-render HTML pages once with the config baked in.
+    let scroll_html = Arc::new(render_scroll_html(&cfg.scroll, &cfg.ticker));
     let scroll_html_route = scroll_html.clone();
 
+    let ticker_html = Arc::new(render_ticker_html(&cfg.ticker));
+    let ticker_html_route = ticker_html.clone();
+
+    let list_html = Arc::new(render_list_html(&cfg.ticker));
+    let list_html_route = list_html.clone();
+
     let app = Router::new()
-        .route("/", get(list_handler))
-        .route("/ticker", get(ticker_handler))
+        .route("/", get(move || {
+            let html = list_html_route.clone();
+            async move { Html((*html).clone()) }
+        }))
+        .route("/ticker", get(move || {
+            let html = ticker_html_route.clone();
+            async move { Html((*html).clone()) }
+        }))
         .route("/scroll", get(move || {
             let html = scroll_html_route.clone();
             async move { Html((*html).clone()) }
@@ -103,15 +128,6 @@ fn get_local_ip() -> Option<String> {
     sock.connect("8.8.8.8:80").ok()?;
     sock.local_addr().ok().map(|a| a.ip().to_string())
 }
-
-async fn ticker_handler() -> impl IntoResponse {
-    Html(TICKER_HTML)
-}
-
-async fn list_handler() -> impl IntoResponse {
-    Html(LIST_HTML)
-}
-
 
 async fn api_state_handler(State(state): State<SharedState>) -> impl IntoResponse {
     match state.read().unwrap().clone() {

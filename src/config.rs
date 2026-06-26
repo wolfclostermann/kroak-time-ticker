@@ -45,6 +45,11 @@ pub struct TickerConfig {
     /// How often to poll the upstream API (milliseconds).
     #[serde(default = "default_poll_interval")]
     pub poll_interval_ms: u64,
+
+    /// When true, singers with no song queued are shown in the rotation.
+    /// Default false: singers without a queued song are hidden.
+    #[serde(default)]
+    pub show_empty_singers: bool,
 }
 
 impl Default for TickerConfig {
@@ -53,6 +58,7 @@ impl Default for TickerConfig {
             upstream_url: default_upstream_url(),
             singer_count: default_singer_count(),
             poll_interval_ms: default_poll_interval(),
+            show_empty_singers: false,
         }
     }
 }
