@@ -1,12 +1,9 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
-    /// Path to OpenKJ data directory. Auto-discovered if not set.
-    pub data_dir: Option<PathBuf>,
-
     #[serde(default)]
     pub server: ServerConfig,
 
@@ -34,11 +31,15 @@ impl Default for ServerConfig {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TickerConfig {
+    /// URL of the kroak-time /api/state endpoint to poll.
+    #[serde(default = "default_upstream_url")]
+    pub upstream_url: String,
+
     /// How many singers to show in the ticker (after current + next up).
     #[serde(default = "default_singer_count")]
     pub singer_count: usize,
 
-    /// How often to poll the database (milliseconds).
+    /// How often to poll the upstream API (milliseconds).
     #[serde(default = "default_poll_interval")]
     pub poll_interval_ms: u64,
 }
@@ -46,6 +47,7 @@ pub struct TickerConfig {
 impl Default for TickerConfig {
     fn default() -> Self {
         Self {
+            upstream_url: default_upstream_url(),
             singer_count: default_singer_count(),
             poll_interval_ms: default_poll_interval(),
         }
@@ -57,6 +59,9 @@ fn default_port() -> u16 {
 }
 fn default_bind() -> String {
     "0.0.0.0".to_string()
+}
+fn default_upstream_url() -> String {
+    "http://localhost:7070/api/state".to_string()
 }
 fn default_singer_count() -> usize {
     8
@@ -78,7 +83,6 @@ impl Config {
                 path.display()
             );
             let cfg = Config {
-                data_dir: None,
                 server: ServerConfig::default(),
                 ticker: TickerConfig::default(),
             };
@@ -90,77 +94,11 @@ impl Config {
     pub fn save(&self, path: &Path) -> Result<()> {
         let body = toml::to_string_pretty(self).context("Failed to serialize config")?;
         let content = format!(
-            "# openkj-ticker configuration\n\
-             # Set data_dir to override auto-discovery.\n\
-             # Example: data_dir = \"/home/user/.local/share/OpenKJ2\"\n\n{}",
+            "# kroak-time-ticker configuration\n\
+             # Set upstream_url to point at your kroak-time /api/state endpoint.\n\n{}",
             body
         );
         std::fs::write(path, content)
             .with_context(|| format!("Failed to write config: {}", path.display()))
-    }
-}
-
-/// Search platform default locations for an OpenKJ data directory.
-/// Returns the first candidate that contains openkj.sqlite or openkj2.ini.
-pub fn discover_data_dir() -> Option<PathBuf> {
-    let candidates = build_candidates()?;
-
-    // Prefer a directory that already has the database or settings file.
-    for candidate in &candidates {
-        if candidate.join("openkj.sqlite").exists()
-            || candidate.join("openkj.ini").exists()
-            || candidate.join("openkj2.ini").exists()
-        {
-            return Some(candidate.clone());
-        }
-    }
-
-    // Fall back to any candidate directory that exists (OpenKJ installed but not yet run).
-    for candidate in candidates {
-        if candidate.exists() {
-            return Some(candidate);
-        }
-    }
-
-    None
-}
-
-fn build_candidates() -> Option<Vec<PathBuf>> {
-    #[cfg(target_os = "macos")]
-    {
-        let support = dirs::data_dir()?; // ~/Library/Application Support
-        Some(vec![
-            support.join("OpenKJ2"),
-            support.join("OpenKJ2").join("OpenKJ2"),
-            support.join("OpenKJ2-unstable"),
-            support.join("OpenKJ"),
-        ])
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let data = dirs::data_dir()?; // ~/.local/share
-        Some(vec![
-            data.join("OpenKJ2"),
-            data.join("OpenKJ2").join("OpenKJ2"),
-            data.join("OpenKJ2-unstable"),
-            data.join("OpenKJ"),
-        ])
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let roaming = dirs::data_dir()?; // %APPDATA%\Roaming
-        Some(vec![
-            roaming.join("OpenKJ2"),
-            roaming.join("OpenKJ2").join("OpenKJ2"),
-            roaming.join("OpenKJ2-unstable"),
-            roaming.join("OpenKJ"),
-        ])
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    {
-        None
     }
 }

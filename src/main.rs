@@ -1,6 +1,6 @@
 mod config;
-mod db;
 mod server;
+mod state;
 
 use anyhow::Result;
 use clap::Parser;
@@ -8,19 +8,19 @@ use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "openkj-ticker",
-    about = "OpenKJ karaoke rotation ticker for OBS",
-    long_about = "Reads the OpenKJ SQLite database and serves a live rotation \
-                  ticker as a web page. Connect OBS Browser Source to the /ticker URL."
+    name = "kroak-time-ticker",
+    about = "kroak-time rotation ticker for OBS",
+    long_about = "Polls a kroak-time /api/state endpoint and serves a live rotation \
+                  ticker as a web page. Connect OBS Browser Source to /ticker or /scroll."
 )]
 struct Args {
     /// Path to the config file (created with defaults if it does not exist).
-    #[arg(short, long, default_value = "openkj-ticker.toml")]
+    #[arg(short, long, default_value = "kroak-time-ticker.toml")]
     config: PathBuf,
 
-    /// Override the OpenKJ data directory (contains openkj.sqlite and openkj2.ini).
+    /// Override the kroak-time upstream API URL.
     #[arg(long)]
-    data_dir: Option<PathBuf>,
+    upstream_url: Option<String>,
 
     /// Override the HTTP server port.
     #[arg(short, long)]
@@ -36,7 +36,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "openkj_ticker=debug".parse().unwrap()),
+                .unwrap_or_else(|_| "kroak_time_ticker=debug".parse().unwrap()),
         )
         .init();
 
@@ -45,33 +45,14 @@ async fn main() -> Result<()> {
     let mut cfg = config::Config::load_or_create(&args.config)?;
 
     // CLI flags override config file values.
-    if let Some(data_dir) = args.data_dir {
-        cfg.data_dir = Some(data_dir);
+    if let Some(url) = args.upstream_url {
+        cfg.ticker.upstream_url = url;
     }
     if let Some(port) = args.port {
         cfg.server.port = port;
     }
     if let Some(count) = args.singer_count {
         cfg.ticker.singer_count = count;
-    }
-
-    // Auto-discover the data directory if not already set.
-    if cfg.data_dir.is_none() {
-        match config::discover_data_dir() {
-            Some(dir) => {
-                tracing::info!("Discovered OpenKJ data directory: {}", dir.display());
-                cfg.data_dir = Some(dir);
-                // Persist the discovered path so the user can see and edit it.
-                cfg.save(&args.config)?;
-            }
-            None => {
-                tracing::warn!(
-                    "Could not find OpenKJ data directory automatically. \
-                    Set data_dir in {} or pass --data-dir.",
-                    args.config.display()
-                );
-            }
-        }
     }
 
     server::run(cfg).await

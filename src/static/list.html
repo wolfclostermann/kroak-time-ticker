@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OpenKJ Rotation</title>
+<title>kroak-time Rotation</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -258,7 +258,7 @@
         document.getElementById('tbody').innerHTML =
           `<tr><td colspan="3" id="empty-msg" style="color:#c60">` +
           (s.status === 'database_not_found'
-            ? 'OpenKJ database not found — is OpenKJ running?'
+            ? 'Upstream not reachable — is kroak-time running?'
             : 'Waiting for data…') +
           `</td></tr>`;
         return;
