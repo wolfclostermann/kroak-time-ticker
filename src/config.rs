@@ -50,6 +50,14 @@ pub struct TickerConfig {
     /// Default false: singers without a queued song are hidden.
     #[serde(default)]
     pub show_empty_singers: bool,
+
+    /// "NEXT" text shown when there is no one in the rotation.
+    #[serde(default = "default_empty_next_text")]
+    pub empty_next_text: String,
+
+    /// "THEN" entries shown when there is no one in the rotation.
+    #[serde(default = "default_empty_then_text")]
+    pub empty_then_text: Vec<String>,
 }
 
 impl Default for TickerConfig {
@@ -59,6 +67,8 @@ impl Default for TickerConfig {
             singer_count: default_singer_count(),
             poll_interval_ms: default_poll_interval(),
             show_empty_singers: false,
+            empty_next_text: default_empty_next_text(),
+            empty_then_text: default_empty_then_text(),
         }
     }
 }
@@ -148,6 +158,15 @@ fn default_singer_count() -> usize {
 }
 fn default_poll_interval() -> u64 {
     1500
+}
+fn default_empty_next_text() -> String {
+    "Your Name Could Be Here".to_string()
+}
+fn default_empty_then_text() -> Vec<String> {
+    vec![
+        "Just scan the QR code".to_string(),
+        "Or Fill Out A Slip".to_string(),
+    ]
 }
 
 impl Config {

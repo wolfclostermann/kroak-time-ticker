@@ -231,7 +231,7 @@
     return s;
   }
 
-  function setCard(nameEl, songEl, singer) {
+  function setCard(nameEl, songEl, singer, emptyText) {
     if (singer) {
       nameEl.textContent = singer.name;
       nameEl.classList.remove('empty-hero');
@@ -240,8 +240,8 @@
         ? `<span class="song-title">${song}</span>`
         : '';
     } else {
-      nameEl.textContent = '—';
-      nameEl.classList.add('empty-hero');
+      nameEl.textContent = emptyText || '—';
+      nameEl.classList.toggle('empty-hero', !emptyText);
       songEl.innerHTML = '';
     }
   }
@@ -273,31 +273,36 @@
       const nowSinger  = s.is_playing ? s.current_singer : null;
       const nextSinger = s.is_playing ? s.next_up : s.current_singer;
 
-      setCard(document.getElementById('now-name'), document.getElementById('now-song'), nowSinger);
-      setCard(document.getElementById('next-name'), document.getElementById('next-song'), nextSinger);
-
-      const tbody = document.getElementById('tbody');
-
-      if (!s.rotation || s.rotation.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="3" id="empty-msg">No singers in rotation</td></tr>';
-        document.getElementById('last-updated').textContent =
-          `Updated ${new Date().toLocaleTimeString()}`;
-        return;
-      }
-
       const nowName  = nowSinger?.name;
       const nextName = nextSinger?.name;
 
       const rotation = TICKER_CFG.show_empty_singers
-        ? s.rotation
-        : s.rotation.filter(r => r.next_song_title || r.name === nowName || r.name === nextName);
+        ? (s.rotation || [])
+        : (s.rotation || []).filter(r => r.next_song_title || r.name === nowName || r.name === nextName);
+
+      const tbody = document.getElementById('tbody');
 
       if (rotation.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="3" id="empty-msg">No singers with songs queued</td></tr>';
+        const nextText  = TICKER_CFG.empty_next_text || 'Your Name Could Be Here';
+        const thenItems = (TICKER_CFG.empty_then_text && TICKER_CFG.empty_then_text.length)
+          ? TICKER_CFG.empty_then_text
+          : ['Just scan the QR code', 'Or Fill Out A Slip'];
+
+        setCard(document.getElementById('now-name'), document.getElementById('now-song'), nowSinger);
+        setCard(document.getElementById('next-name'), document.getElementById('next-song'), nextSinger, nextText);
+
+        tbody.innerHTML = thenItems.map((t, i) => `<tr>
+          <td><span class="badge badge-num">${i + 1}</span></td>
+          <td colspan="2"><span class="singer-name">${esc(t)}</span></td>
+        </tr>`).join('');
+
         document.getElementById('last-updated').textContent =
           `Updated ${new Date().toLocaleTimeString()}`;
         return;
       }
+
+      setCard(document.getElementById('now-name'), document.getElementById('now-song'), nowSinger);
+      setCard(document.getElementById('next-name'), document.getElementById('next-song'), nextSinger);
 
       tbody.innerHTML = rotation.map((singer, i) => {
         const isNow  = s.is_playing && singer.is_current;

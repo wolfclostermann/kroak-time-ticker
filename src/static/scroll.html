@@ -104,49 +104,67 @@
     return s;
   }
 
+  function buildEmptyContent() {
+    const nextText  = TICKER_CFG.empty_next_text || 'Your Name Could Be Here';
+    const thenItems = (TICKER_CFG.empty_then_text && TICKER_CFG.empty_then_text.length)
+      ? TICKER_CFG.empty_then_text
+      : ['Just scan the QR code', 'Or Fill Out A Slip'];
+
+    const nextSeg = `<span class="seg"><span class="lbl-next">NEXT</span>` +
+      `<span class="singer-name">${esc(nextText)}</span></span>`;
+
+    const thenEntries = thenItems.map(t => `<span class="up-singer">${esc(t)}</span>`).join('<span class="pipe">  </span>');
+    const thenSeg = `<span class="seg"><span class="lbl-up">THEN</span>${thenEntries}</span>`;
+
+    return [nextSeg, thenSeg].join('<span class="pipe">◆</span>');
+  }
+
   function buildContent(s) {
     if (!s || s.status === 'not_ready' || s.status === 'database_not_found') {
       return '<span class="seg" style="color:#666">Waiting for kroak-time…</span>';
-    }
-    if (!s.rotation || s.rotation.length === 0) {
-      return '<span class="seg" style="color:#666">No singers in rotation</span>';
     }
 
     const parts     = [];
     const skipNames = new Set();
 
-    if (s.is_playing && s.current_singer) {
-      const c = s.current_singer;
-      parts.push(
-        `<span class="seg"><span class="lbl-now">NOW</span>` +
-        `<span class="singer-name">${esc(c.name)}</span>${songHtml(c)}</span>`
-      );
-      skipNames.add(c.name);
+    if (s.rotation && s.rotation.length > 0) {
+      if (s.is_playing && s.current_singer) {
+        const c = s.current_singer;
+        parts.push(
+          `<span class="seg"><span class="lbl-now">NOW</span>` +
+          `<span class="singer-name">${esc(c.name)}</span>${songHtml(c)}</span>`
+        );
+        skipNames.add(c.name);
+      }
+
+      const nextSinger = s.is_playing ? s.next_up : s.current_singer;
+      if (nextSinger && !skipNames.has(nextSinger.name) && (TICKER_CFG.show_empty_singers || nextSinger.next_song_title)) {
+        parts.push(
+          `<span class="seg"><span class="lbl-next">NEXT</span>` +
+          `<span class="singer-name">${esc(nextSinger.name)}</span>${songHtml(nextSinger)}</span>`
+        );
+        skipNames.add(nextSinger.name);
+      }
+
+      const rest  = s.rotation.filter(r => !skipNames.has(r.name) && (TICKER_CFG.show_empty_singers || r.next_song_title));
+      const shown = rest.slice(0, Math.max(0, (s.singer_count || 8) - skipNames.size));
+
+      if (shown.length > 0) {
+        const entries = shown.map((r, i) => {
+          const num  = i + skipNames.size + 1;
+          let   html = `<span class="up-num">${num}.</span><span class="up-singer">${esc(r.name)}</span>`;
+          if (r.next_song_title) {
+            html += `<span class="up-song">${esc(r.next_song_title)}</span>`;
+          }
+          return html;
+        }).join('<span class="pipe">  </span>');
+
+        parts.push(`<span class="seg"><span class="lbl-up">THEN</span>${entries}</span>`);
+      }
     }
 
-    const nextSinger = s.is_playing ? s.next_up : s.current_singer;
-    if (nextSinger && !skipNames.has(nextSinger.name) && (TICKER_CFG.show_empty_singers || nextSinger.next_song_title)) {
-      parts.push(
-        `<span class="seg"><span class="lbl-next">NEXT</span>` +
-        `<span class="singer-name">${esc(nextSinger.name)}</span>${songHtml(nextSinger)}</span>`
-      );
-      skipNames.add(nextSinger.name);
-    }
-
-    const rest  = s.rotation.filter(r => !skipNames.has(r.name) && (TICKER_CFG.show_empty_singers || r.next_song_title));
-    const shown = rest.slice(0, Math.max(0, (s.singer_count || 8) - skipNames.size));
-
-    if (shown.length > 0) {
-      const entries = shown.map((r, i) => {
-        const num  = i + skipNames.size + 1;
-        let   html = `<span class="up-num">${num}.</span><span class="up-singer">${esc(r.name)}</span>`;
-        if (r.next_song_title) {
-          html += `<span class="up-song">${esc(r.next_song_title)}</span>`;
-        }
-        return html;
-      }).join('<span class="pipe">  </span>');
-
-      parts.push(`<span class="seg"><span class="lbl-up">THEN</span>${entries}</span>`);
+    if (parts.length === 0) {
+      return buildEmptyContent();
     }
 
     return parts.join('<span class="pipe">◆</span>');
