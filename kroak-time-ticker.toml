@@ -29,7 +29,9 @@
 #                             # rounded to 15-minute increments). true = precise wording
 #                             # ("2 hours 1 minute").
 # count_legend = "{count} singers in the queue"          # {count} is replaced with the number.
-# time_legend = "about {time} to get through the queue"  # {time} is replaced with the duration.
+# time_legend = "{time} to get through the queue"  # {time} is replaced with the duration.
+#                             # Note: the rounded formatter already prepends its own "about"
+#                             # (e.g. "about an hour and a half") — don't add another one here.
 #
 # [scroll]                   # Visual styling for the 1920x1080 /scroll overlay.
 # height = 80                # Banner height in pixels.
@@ -63,7 +65,7 @@ show_at_start = true
 show_every_n_singers = 8
 precise_duration = false
 count_legend = "{count} singers in the queue"
-time_legend = "about {time} to get through the queue"
+time_legend = "{time} to get through the queue"
 
 [scroll]
 height = 80

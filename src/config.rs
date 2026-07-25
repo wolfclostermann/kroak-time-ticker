@@ -139,7 +139,7 @@ fn default_count_legend() -> String {
     "{count} singers in the queue".to_string()
 }
 fn default_time_legend() -> String {
-    "about {time} to get through the queue".to_string()
+    "{time} to get through the queue".to_string()
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -307,7 +307,9 @@ const CONFIG_HEADER: &str = r##"# kroak-time-ticker configuration
 #                             # rounded to 15-minute increments). true = precise wording
 #                             # ("2 hours 1 minute").
 # count_legend = "{count} singers in the queue"          # {count} is replaced with the number.
-# time_legend = "about {time} to get through the queue"  # {time} is replaced with the duration.
+# time_legend = "{time} to get through the queue"  # {time} is replaced with the duration.
+#                             # Note: the rounded formatter already prepends its own "about"
+#                             # (e.g. "about an hour and a half") — don't add another one here.
 #
 # [scroll]                   # Visual styling for the 1920x1080 /scroll overlay.
 # height = 80                # Banner height in pixels.
