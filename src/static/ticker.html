@@ -70,6 +70,7 @@
   .lbl-now  { color: #ffd44f; font-weight: 700; margin-right: 14px; }
   .lbl-next { color: #5bc8ff; font-weight: 700; margin-right: 14px; }
   .lbl-up   { color: #aaa;    font-weight: 700; margin-right: 14px; }
+  .lbl-info { color: #7cfc8a; font-weight: 700; margin-right: 14px; }
 
   .singer-name { color: #fff; font-weight: 600; }
   .song-title  { color: #ddd; font-style: italic; }
@@ -122,6 +123,82 @@
     return s;
   }
 
+  // ── Queue info (singer count + estimated queue time) ───────────────────────
+
+  let queueInfoShownOnce = false;
+  let singersSinceInfo   = 0;
+  let lastCurrentName; // undefined until the first real state arrives
+
+  function trackSingerAdvance(s) {
+    const curName = (s && s.current_singer) ? s.current_singer.name : null;
+    if (lastCurrentName === undefined) {
+      lastCurrentName = curName;
+      return;
+    }
+    if (curName !== lastCurrentName) {
+      singersSinceInfo++;
+      lastCurrentName = curName;
+    }
+  }
+
+  function shouldShowQueueInfo(cfg) {
+    if (!queueInfoShownOnce && cfg.show_at_start) {
+      queueInfoShownOnce = true;
+      singersSinceInfo   = 0;
+      return true;
+    }
+    if (cfg.show_every_n_singers > 0 && singersSinceInfo >= cfg.show_every_n_singers) {
+      queueInfoShownOnce = true;
+      singersSinceInfo   = 0;
+      return true;
+    }
+    return false;
+  }
+
+  function formatDurationPrecise(totalSeconds) {
+    const mins  = Math.max(0, Math.round(totalSeconds / 60));
+    const h     = Math.floor(mins / 60);
+    const m     = mins % 60;
+    const parts = [];
+    if (h > 0) parts.push(`${h} hour${h === 1 ? '' : 's'}`);
+    if (m > 0 || h === 0) parts.push(`${m} minute${m === 1 ? '' : 's'}`);
+    return parts.join(' ');
+  }
+
+  function formatDurationRounded(totalSeconds) {
+    const mins    = Math.max(0, Math.round(totalSeconds / 60));
+    const rounded = Math.round(mins / 15) * 15;
+    const h       = Math.floor(rounded / 60);
+    const q       = rounded % 60; // 0, 15, 30, 45
+
+    if (h === 0 && q === 0) return 'no time';
+    const hourPhrase = h === 1 ? 'an hour' : `${h} hours`;
+
+    if (h === 0) {
+      return q === 30 ? 'about half an hour' : `about ${q} minutes`;
+    }
+    if (q === 0)  return `about ${hourPhrase}`;
+    if (q === 30) return `about ${hourPhrase} and a half`;
+    return `about ${hourPhrase} and ${q} minutes`;
+  }
+
+  function formatQueueDuration(totalSeconds, cfg) {
+    return cfg.precise_duration
+      ? formatDurationPrecise(totalSeconds)
+      : formatDurationRounded(totalSeconds);
+  }
+
+  function queueInfoHtml(s, cfg) {
+    const count    = s.rotation ? s.rotation.length : 0;
+    const timeStr  = formatQueueDuration(s.queue_duration_secs || 0, cfg);
+    const countTxt = (cfg.count_legend || '{count} singers in the queue').replace('{count}', count);
+    const timeTxt  = (cfg.time_legend  || 'about {time} to get through the queue').replace('{time}', timeStr);
+    return `<span class="seg"><span class="lbl-info">QUEUE</span>` +
+      `<span class="singer-name">${esc(countTxt)}</span>` +
+      `<span class="pipe">·</span>` +
+      `<span class="song-artist">${esc(timeTxt)}</span></span>`;
+  }
+
   function buildEmptyContent() {
     const nextText  = TICKER_CFG.empty_next_text || 'Your Name Could Be Here';
     const thenItems = (TICKER_CFG.empty_then_text && TICKER_CFG.empty_then_text.length)
@@ -146,6 +223,10 @@
     const skipNames = new Set();
 
     if (s.rotation && s.rotation.length > 0) {
+      if (shouldShowQueueInfo(TICKER_CFG.queue_info)) {
+        parts.push(queueInfoHtml(s, TICKER_CFG.queue_info));
+      }
+
       // Show NOW only when a song is actively playing.
       if (s.is_playing && s.current_singer) {
         const c = s.current_singer;
@@ -202,6 +283,7 @@
   const GAP = '<span style="display:inline-block;width:80px"></span>';
 
   function updateContent() {
+    trackSingerAdvance(state);
     const html = buildContent(state);
     track.innerHTML = html + GAP + html + GAP;
     pendingLayout = true;

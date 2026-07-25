@@ -65,6 +65,10 @@ pub struct TickerConfig {
     /// "THEN" entries shown when there is no one in the rotation.
     #[serde(default = "default_empty_then_text")]
     pub empty_then_text: Vec<String>,
+
+    /// Singer-count / queue-time banner: when and how to show it.
+    #[serde(default)]
+    pub queue_info: QueueInfoConfig,
 }
 
 impl Default for TickerConfig {
@@ -76,8 +80,59 @@ impl Default for TickerConfig {
             show_empty_singers: false,
             empty_next_text: default_empty_next_text(),
             empty_then_text: default_empty_then_text(),
+            queue_info: QueueInfoConfig::default(),
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct QueueInfoConfig {
+    /// Show the singer-count / queue-time banner as soon as the ticker loads.
+    #[serde(default = "default_true")]
+    pub show_at_start: bool,
+
+    /// Re-show the banner after this many singers have taken their turn.
+    /// 0 disables the recurring banner (it will still show at start if enabled above).
+    #[serde(default = "default_show_every_n_singers")]
+    pub show_every_n_singers: u32,
+
+    /// true = precise duration ("2 hours 1 minute"). false = friendly rounded duration
+    /// ("about an hour and a half"), rounded to 15-minute increments.
+    #[serde(default)]
+    pub precise_duration: bool,
+
+    /// Legend template for the singer count. `{count}` is replaced with the number.
+    #[serde(default = "default_count_legend")]
+    pub count_legend: String,
+
+    /// Legend template for the queue time. `{time}` is replaced with the formatted duration.
+    #[serde(default = "default_time_legend")]
+    pub time_legend: String,
+}
+
+impl Default for QueueInfoConfig {
+    fn default() -> Self {
+        Self {
+            show_at_start: default_true(),
+            show_every_n_singers: default_show_every_n_singers(),
+            precise_duration: false,
+            count_legend: default_count_legend(),
+            time_legend: default_time_legend(),
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+fn default_show_every_n_singers() -> u32 {
+    8
+}
+fn default_count_legend() -> String {
+    "{count} singers in the queue".to_string()
+}
+fn default_time_legend() -> String {
+    "about {time} to get through the queue".to_string()
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -119,6 +174,10 @@ pub struct ScrollConfig {
 
     #[serde(default = "default_color_artist")]
     pub color_artist: String,
+
+    /// Color of the "QUEUE" label on the singer-count / queue-time banner.
+    #[serde(default = "default_color_info")]
+    pub color_info: String,
 }
 
 impl Default for ScrollConfig {
@@ -135,6 +194,7 @@ impl Default for ScrollConfig {
             color_singer: default_color_singer(),
             color_song:   default_color_song(),
             color_artist: default_color_artist(),
+            color_info:   default_color_info(),
         }
     }
 }
@@ -150,6 +210,7 @@ fn default_color_up()      -> String { "#aaa".into() }
 fn default_color_singer()  -> String { "#fff".into() }
 fn default_color_song()    -> String { "#ddd".into() }
 fn default_color_artist()  -> String { "#aaa".into() }
+fn default_color_info()    -> String { "#7cfc8a".into() }
 
 fn default_port() -> u16 {
     8080

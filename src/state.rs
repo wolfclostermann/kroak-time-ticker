@@ -17,6 +17,11 @@ pub struct KaraokeState {
     pub singer_count: usize,
     pub is_playing: bool,
     pub status: String,
+    /// Raw estimated seconds for the full rotation to complete, as reported by
+    /// kroak-time. `#[serde(default)]` so this ticker keeps working against an
+    /// older kroak-time that doesn't send the field yet.
+    #[serde(default)]
+    pub queue_duration_secs: i64,
 }
 
 pub async fn fetch_state(upstream_url: &str) -> Result<KaraokeState> {

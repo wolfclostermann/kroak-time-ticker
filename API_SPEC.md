@@ -24,7 +24,8 @@ No authentication. No query parameters. Always returns JSON.
   "rotation":       <Singer[]>,
   "singer_count":   <integer>,
   "is_playing":     <boolean>,
-  "status":         <string>
+  "status":         <string>,
+  "queue_duration_secs": <integer>
 }
 ```
 
@@ -38,6 +39,7 @@ No authentication. No query parameters. Always returns JSON.
 | `singer_count` | integer | A display hint passed through to the ticker unchanged. Set it to however many singers beyond NOW/NEXT you want shown in the overlay (default: 8). |
 | `is_playing` | boolean | `true` when a song is actively being performed by `current_singer`. `false` between songs or when the rotation is idle. |
 | `status` | string | Health string (see Status values below). |
+| `queue_duration_secs` | integer | Raw estimated seconds for the full rotation to complete (sum of each singer's next queued song duration plus the gap between singers). This is deliberately unformatted — the ticker owns all display decisions (whether/when to show it, precise vs. rounded phrasing, legend text). See the `[ticker.queue_info]` section of `kroak-time-ticker.toml`. |
 
 ---
 
@@ -124,7 +126,8 @@ If a singer has no songs queued, set `next_song_artist` and `next_song_title` to
   ],
   "singer_count": 8,
   "is_playing": true,
-  "status": "ok"
+  "status": "ok",
+  "queue_duration_secs": 1980
 }
 ```
 
@@ -136,7 +139,8 @@ If a singer has no songs queued, set `next_song_artist` and `next_song_title` to
   "rotation": [ ... ],
   "singer_count": 8,
   "is_playing": false,
-  "status": "ok"
+  "status": "ok",
+  "queue_duration_secs": 1980
 }
 ```
 
@@ -148,6 +152,7 @@ If a singer has no songs queued, set `next_song_artist` and `next_song_title` to
   "rotation": [],
   "singer_count": 8,
   "is_playing": false,
-  "status": "not_ready"
+  "status": "not_ready",
+  "queue_duration_secs": 0
 }
 ```
