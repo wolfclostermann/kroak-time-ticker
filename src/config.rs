@@ -49,6 +49,12 @@ pub struct TickerConfig {
     #[serde(default = "default_singer_count")]
     pub singer_count: usize,
 
+    /// When true, ignore any cap on how many singers to show — both `singer_count`
+    /// above and kroak-time's own reported cap — and always show every singer
+    /// currently in the rotation. Default false (respect the cap).
+    #[serde(default)]
+    pub show_all_singers: bool,
+
     /// How often to poll the upstream API (milliseconds).
     #[serde(default = "default_poll_interval")]
     pub poll_interval_ms: u64,
@@ -76,6 +82,7 @@ impl Default for TickerConfig {
         Self {
             upstream_url: default_upstream_url(),
             singer_count: default_singer_count(),
+            show_all_singers: false,
             poll_interval_ms: default_poll_interval(),
             show_empty_singers: false,
             empty_next_text: default_empty_next_text(),
@@ -261,12 +268,58 @@ impl Config {
 
     pub fn save(&self, path: &Path) -> Result<()> {
         let body = toml::to_string_pretty(self).context("Failed to serialize config")?;
-        let content = format!(
-            "# kroak-time-ticker configuration\n\
-             # Set upstream_url to point at your kroak-time /api/state endpoint.\n\n{}",
-            body
-        );
+        let content = format!("{CONFIG_HEADER}\n{body}");
         std::fs::write(path, content)
             .with_context(|| format!("Failed to write config: {}", path.display()))
     }
 }
+
+/// Reference documentation for every config key, written at the top of the file.
+/// Keep in sync with the `#[serde(default = ...)]` values on the structs above.
+const CONFIG_HEADER: &str = r##"# kroak-time-ticker configuration
+#
+# Reference of every option below (all commented out here — the active values,
+# which may differ from these defaults, are set further down in this file).
+#
+# [server]
+# port = 8080                # HTTP port this ticker listens on (/, /ticker, /scroll, /api/state).
+# bind_address = "0.0.0.0"   # Interface to bind. Use "127.0.0.1" to restrict to localhost only.
+#
+# [ticker]
+# upstream_url = "http://localhost:8765/api/state"   # kroak-time's /api/state endpoint to poll.
+# poll_interval_ms = 1500    # How often to poll the upstream API, in milliseconds.
+# singer_count = 0           # Local cap on how many upcoming singers to show, beyond NOW/NEXT.
+#                             # 0 = no override, use whatever kroak-time reports via its own
+#                             # `api_ticker_singer_count` setting (which itself defaults to
+#                             # unlimited). Set >0 here to show fewer than kroak-time reports.
+# show_all_singers = false   # When true, ignore singer_count above AND kroak-time's reported
+#                             # cap entirely, and always show every singer in the rotation.
+# show_empty_singers = false # When true, singers with no song queued are still shown in the
+#                             # THEN list. Default false hides them.
+# empty_next_text = "Your Name Could Be Here"   # NEXT placeholder shown when rotation is empty.
+# empty_then_text = ["Just scan the QR code", "Or Fill Out A Slip"]   # THEN placeholder entries.
+#
+# [ticker.queue_info]        # Singer-count / queue-time banner: when and how to show it.
+# show_at_start = true       # Show the banner once as soon as the ticker loads.
+# show_every_n_singers = 8   # Re-show the banner after this many singers take their turn.
+#                             # 0 disables the recurring banner (it can still show at start).
+# precise_duration = false   # false = friendly rounded wording ("about an hour and a half",
+#                             # rounded to 15-minute increments). true = precise wording
+#                             # ("2 hours 1 minute").
+# count_legend = "{count} singers in the queue"          # {count} is replaced with the number.
+# time_legend = "about {time} to get through the queue"  # {time} is replaced with the duration.
+#
+# [scroll]                   # Visual styling for the 1920x1080 /scroll overlay.
+# height = 80                # Banner height in pixels.
+# bg = "rgba(8,8,12,0.90)"   # Background, any CSS color value.
+# font = "Segoe UI, Helvetica Neue, Arial, sans-serif"   # Font family.
+# size = 32                  # Font size in pixels.
+# speed = 120                # Scroll speed in pixels per second.
+# color_now = "#ffd44f"      # "NOW" label color.
+# color_next = "#5bc8ff"     # "NEXT" label color.
+# color_up = "#aaa"          # "THEN" label color.
+# color_singer = "#fff"      # Singer name color.
+# color_song = "#ddd"        # Song title color.
+# color_artist = "#aaa"      # Song artist color.
+# color_info = "#7cfc8a"     # "QUEUE" label color (singer-count / queue-time banner).
+"##;
