@@ -39,6 +39,13 @@ pub struct TickerConfig {
     pub upstream_url: String,
 
     /// How many singers to show in the ticker (after current + next up).
+    ///
+    /// This should normally be configured in kroak-time itself (the
+    /// `api_ticker_singer_count` setting), which reports it via `/api/state`.
+    /// This field is a local override that only takes effect when > 0 — set it
+    /// here only if you want THIS ticker instance to show fewer singers than
+    /// kroak-time is configured to report (e.g. a smaller display). Default 0
+    /// means "no override, use whatever kroak-time reports" (0 upstream = unlimited).
     #[serde(default = "default_singer_count")]
     pub singer_count: usize,
 
@@ -151,10 +158,10 @@ fn default_bind() -> String {
     "0.0.0.0".to_string()
 }
 fn default_upstream_url() -> String {
-    "http://localhost:7070/api/state".to_string()
+    "http://localhost:8765/api/state".to_string()
 }
 fn default_singer_count() -> usize {
-    8
+    0
 }
 fn default_poll_interval() -> u64 {
     1500
