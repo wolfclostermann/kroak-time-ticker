@@ -7,6 +7,6 @@ bind_address = "0.0.0.0"
 
 [ticker]
 upstream_url = "http://localhost:8765/api/state"
-singer_count = 8
+singer_count = 0
 poll_interval_ms = 1500
 
