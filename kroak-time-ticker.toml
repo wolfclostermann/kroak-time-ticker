@@ -1,0 +1,12 @@
+# kroak-time-ticker configuration
+# Set upstream_url to point at your kroak-time /api/state endpoint.
+
+[server]
+port = 8080
+bind_address = "0.0.0.0"
+
+[ticker]
+upstream_url = "http://localhost:8765/api/state"
+singer_count = 8
+poll_interval_ms = 1500
+
