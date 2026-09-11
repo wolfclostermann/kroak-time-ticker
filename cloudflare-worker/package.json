@@ -1,0 +1,11 @@
+{
+  "name": "kroak-time-ticker-proxy",
+  "private": true,
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "wrangler": "^4.131.1"
+  }
+}

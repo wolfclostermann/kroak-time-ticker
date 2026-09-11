@@ -1,2 +1,3 @@
 /target/
 openkj-ticker.toml
+.env
