@@ -10,3 +10,11 @@ upstream_url = "http://localhost:8765/api/state"
 singer_count = 0
 poll_interval_ms = 1500
 
+[ngrok]
+# Uses its own dedicated ngrok account (separate from Mervyn's), so no
+# concurrent-endpoint conflict.
+enabled = true
+# authtoken left blank on purpose: set NGROK_AUTHTOKEN in .env (gitignored) instead
+# of committing the secret here.
+authtoken = ""
+domain = "cortex-prompter-refract.ngrok-free.dev"

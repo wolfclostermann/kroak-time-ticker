@@ -1,0 +1,11 @@
+# Reverse proxy: singer.wlta.cc -> the kroak-time-ticker ngrok tunnel.
+# Deploy/redeploy with `npm run deploy` (see package.json), or `npx wrangler deploy`.
+name = "kroak-time-ticker-proxy"
+main = "src/worker.js"
+compatibility_date = "2026-09-01"
+
+# custom_domain = true makes wrangler create/manage the DNS record on the
+# wlta.cc zone automatically -- no manual CNAME needed.
+routes = [
+  { pattern = "singer.wlta.cc", custom_domain = true }
+]
