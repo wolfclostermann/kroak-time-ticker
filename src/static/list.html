@@ -7,15 +7,20 @@
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+  /* Kroak theme (dark) — matches kroak-time's "Kroak" appearance preset:
+     window_bg/panel_bg/border/foreground/alt_foreground/accent from
+     ChromeColors::kroak_dark_defaults(), now/next from
+     RotationColors::kroak_dark_defaults() (top_of_rotation / selected_background). */
   :root {
-    --bg:        #0f0f14;
-    --surface:   #1a1a22;
-    --border:    #2a2a36;
-    --now-color: #ffd44f;
-    --next-color:#5bc8ff;
-    --text:      #e8e8f0;
-    --muted:     #888;
-    --dim:       #555;
+    --bg:        #09120b;
+    --surface:   #142017;
+    --border:    #242e26;
+    --now-color: #d9a514;
+    --next-color:#009ca5;
+    --text:      #e3eae4;
+    --muted:     #909c92;
+    --dim:       #5a655c;
+    --accent:    #54b05a;
   }
 
   body {
@@ -34,13 +39,6 @@
     margin-bottom: 24px;
   }
 
-  header h1 {
-    font-size: 22px;
-    font-weight: 700;
-    letter-spacing: 0.03em;
-    color: var(--now-color);
-  }
-
   #status-dot {
     width: 10px;
     height: 10px;
@@ -49,9 +47,33 @@
     flex-shrink: 0;
     transition: background 0.3s;
   }
-  #status-dot.ok   { background: #3c3; }
-  #status-dot.warn { background: #c60; }
-  #status-dot.err  { background: #c33; }
+  #status-dot.ok   { background: #4caf50; }
+  #status-dot.warn { background: #e6a23c; }
+  #status-dot.err  { background: #b03030; }
+
+  .cta-request {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    background: var(--accent);
+    color: #04170a;
+    font-weight: 800;
+    font-size: 17px;
+    letter-spacing: 0.02em;
+    text-decoration: none;
+    border-radius: 10px;
+    padding: 16px 20px;
+    margin-bottom: 24px;
+    animation: cta-pulse 2s ease-in-out infinite;
+  }
+
+  .cta-request:hover { filter: brightness(1.08); }
+
+  @keyframes cta-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(84, 176, 90, 0.5); }
+    50%      { box-shadow: 0 0 0 10px rgba(84, 176, 90, 0); }
+  }
 
   .hero {
     display: flex;
@@ -94,11 +116,11 @@
     text-overflow: ellipsis;
   }
 
-  .hero-card.now  { border-color: rgba(255, 212, 79, 0.35); }
+  .hero-card.now  { border-color: rgba(217, 165, 20, 0.35); }
   .hero-card.now  .label { color: var(--now-color); }
   .hero-card.now  .name  { color: var(--now-color); }
 
-  .hero-card.next { border-color: rgba(91, 200, 255, 0.3); }
+  .hero-card.next { border-color: rgba(0, 156, 165, 0.3); }
   .hero-card.next .label { color: var(--next-color); }
   .hero-card.next .name  { color: var(--next-color); }
 
@@ -127,8 +149,8 @@
 
   tbody tr:hover { background: rgba(255,255,255,0.03); }
 
-  tbody tr.row-now  { background: rgba(255, 212, 79, 0.06); }
-  tbody tr.row-next { background: rgba(91, 200, 255, 0.05); }
+  tbody tr.row-now  { background: rgba(217, 165, 20, 0.06); }
+  tbody tr.row-next { background: rgba(0, 156, 165, 0.05); }
 
   td {
     padding: 12px 14px;
@@ -147,8 +169,8 @@
     text-align: center;
   }
 
-  .badge-now  { background: rgba(255,212,79,0.18); color: var(--now-color);  border: 1px solid rgba(255,212,79,0.35); }
-  .badge-next { background: rgba(91,200,255,0.15); color: var(--next-color); border: 1px solid rgba(91,200,255,0.3); }
+  .badge-now  { background: rgba(217,165,20,0.18); color: var(--now-color);  border: 1px solid rgba(217,165,20,0.35); }
+  .badge-next { background: rgba(0,156,165,0.15);  color: var(--next-color); border: 1px solid rgba(0,156,165,0.3); }
   .badge-num  { background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
 
   .singer-name { font-weight: 600; }
@@ -180,8 +202,11 @@
 
 <header>
   <div id="status-dot"></div>
-  <h1>Karaoke Rotation</h1>
 </header>
+
+<a class="cta-request" id="cta-request" href="https://linktr.ee/wolflike" target="_blank" rel="noopener noreferrer">
+  Request your song
+</a>
 
 <div class="hero">
   <div class="hero-card now" id="card-now">
@@ -211,11 +236,18 @@
 
 <footer>
   <span id="last-updated"></span>
-  <span><a href="/ticker" target="_blank">OBS Ticker page ↗</a></span>
 </footer>
 
 <script>
   const TICKER_CFG = __TICKER_CFG__;
+
+  // "Request your song" button: shown by default, hide with ?request=0
+  // (also accepts false/off/no).
+  (function () {
+    const val = new URLSearchParams(location.search).get('request');
+    const hide = val !== null && ['0', 'false', 'off', 'no'].includes(val.toLowerCase());
+    if (hide) document.getElementById('cta-request').hidden = true;
+  })();
 
   function esc(s) {
     return String(s || '')
@@ -258,7 +290,7 @@
         document.getElementById('now-name').textContent = '—';
         document.getElementById('next-name').textContent = '—';
         document.getElementById('tbody').innerHTML =
-          `<tr><td colspan="3" id="empty-msg" style="color:#c60">` +
+          `<tr><td colspan="3" id="empty-msg" style="color:#e6a23c">` +
           (s.status === 'database_not_found'
             ? 'Upstream not reachable — is kroak-time running?'
             : 'Waiting for data…') +
