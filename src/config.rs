@@ -316,7 +316,7 @@ const CONFIG_HEADER: &str = r##"# kroak-time-ticker configuration
 # which may differ from these defaults, are set further down in this file).
 #
 # [server]
-# port = 8080                # HTTP port this ticker listens on (/, /ticker, /scroll, /api/state).
+# port = 8080                # HTTP port this ticker listens on (/, /scroll, /api/state).
 # bind_address = "0.0.0.0"   # Interface to bind. Use "127.0.0.1" to restrict to localhost only.
 #
 # [ticker]

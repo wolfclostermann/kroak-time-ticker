@@ -18,7 +18,6 @@ use tower_http::cors::CorsLayer;
 
 type SharedState = Arc<RwLock<Option<KaraokeState>>>;
 
-const TICKER_HTML: &str = include_str!("static/ticker.html");
 const LIST_HTML:   &str = include_str!("static/list.html");
 const SCROLL_HTML: &str = include_str!("static/scroll.html");
 
@@ -26,13 +25,6 @@ fn render_scroll_html(scroll_cfg: &crate::config::ScrollConfig, ticker_cfg: &cra
     SCROLL_HTML
         .replace("__SCROLL_CFG__", &serde_json::to_string(scroll_cfg).expect("ScrollConfig is always serializable"))
         .replace("__TICKER_CFG__", &serde_json::to_string(ticker_cfg).expect("TickerConfig is always serializable"))
-}
-
-fn render_ticker_html(cfg: &crate::config::TickerConfig) -> String {
-    TICKER_HTML.replace(
-        "__TICKER_CFG__",
-        &serde_json::to_string(cfg).expect("TickerConfig is always serializable"),
-    )
 }
 
 fn render_list_html(cfg: &crate::config::TickerConfig) -> String {
@@ -69,19 +61,12 @@ pub async fn run(cfg: Config) -> Result<()> {
     let scroll_html = Arc::new(render_scroll_html(&cfg.scroll, &cfg.ticker));
     let scroll_html_route = scroll_html.clone();
 
-    let ticker_html = Arc::new(render_ticker_html(&cfg.ticker));
-    let ticker_html_route = ticker_html.clone();
-
     let list_html = Arc::new(render_list_html(&cfg.ticker));
     let list_html_route = list_html.clone();
 
     let app = Router::new()
         .route("/", get(move || {
             let html = list_html_route.clone();
-            async move { Html((*html).clone()) }
-        }))
-        .route("/ticker", get(move || {
-            let html = ticker_html_route.clone();
             async move { Html((*html).clone()) }
         }))
         .route("/scroll", get(move || {
@@ -121,19 +106,16 @@ fn print_startup_info(port: u16, upstream_url: &str, ngrok_url: Option<&str>) {
     println!("────────────────────────────────────────────────");
     println!("  Upstream  :  {upstream_url}");
     println!("  Dashboard :  http://localhost:{port}/");
-    println!("  OBS Ticker:  http://localhost:{port}/ticker");
     println!("  OBS Scroll:  http://localhost:{port}/scroll  (1920×1080)");
     println!("  JSON API  :  http://localhost:{port}/api/state");
     println!();
     println!("  From other machines on your network:");
     println!("  Dashboard :  http://{local_ip}:{port}/");
-    println!("  OBS Ticker:  http://{local_ip}:{port}/ticker");
     println!("  OBS Scroll:  http://{local_ip}:{port}/scroll");
     if let Some(ngrok_url) = ngrok_url {
         println!();
         println!("  From anywhere via ngrok:");
         println!("  Dashboard :  {ngrok_url}/");
-        println!("  OBS Ticker:  {ngrok_url}/ticker");
         println!("  OBS Scroll:  {ngrok_url}/scroll");
     }
     println!("────────────────────────────────────────────────");
