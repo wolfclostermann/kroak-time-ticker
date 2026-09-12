@@ -8,13 +8,17 @@ background timer. This makes tests deterministic: step through singers
 one at a time (e.g. via curl) and check the ticker's state after each step,
 instead of racing a wall-clock cycle.
 
-Run:  python3 test/mock_server.py [--count N] [--port N]
+Run:  python3 test/mock_server.py [--count N] [--port N] [--singer-count N]
 Then: cargo run -- --upstream-url http://localhost:7070/api/state
 Step: curl http://localhost:7070/advance   (repeat to move to the next singer)
 Reset: curl http://localhost:7070/reset
 
 --count trims the rotation to the first N singers (max 32, the built-in
 list's length); it does not synthesize extra ones beyond that.
+
+--singer-count sets the reported singer_count field in /api/state
+(mirrors kroak-time's real api_ticker_singer_count setting). Default 0
+means unlimited/show all, matching kroak-time's own default.
 """
 
 import argparse
@@ -70,6 +74,10 @@ WAITING_SONGS = [
 AVG_SONG_SECS = 210  # used only to synthesize a plausible queue_duration_secs
 GAP_TIME_SECS = 45
 
+# Mirrors kroak-time's real api_ticker_singer_count setting/default: 0 means
+# unlimited (show every singer), set via --singer-count.
+SINGER_COUNT = 0
+
 lock = threading.Lock()
 current_index = 0
 is_playing = True
@@ -108,7 +116,7 @@ def build_state():
         "next_up": next_up,
         "rotation": rotation,
         "waiting": waiting,
-        "singer_count": 8,
+        "singer_count": SINGER_COUNT,
         "is_playing": playing,
         "status": "ok",
         "queue_duration_secs": queue_duration_secs,
@@ -165,16 +173,22 @@ if __name__ == "__main__":
     parser.add_argument("--count", type=int, default=len(ROTATION_SONGS),
                          help=f"singers in rotation, 1-{len(ROTATION_SONGS)} (default: all)")
     parser.add_argument("--port", type=int, default=7070)
+    parser.add_argument("--singer-count", type=int, default=0,
+                         help="reported singer_count field (0 = unlimited/show all, default)")
     args = parser.parse_args()
 
     if not (1 <= args.count <= len(ROTATION_SONGS)):
         parser.error(f"--count must be between 1 and {len(ROTATION_SONGS)}")
+    if args.singer_count < 0:
+        parser.error("--singer-count must be >= 0")
     ROTATION_SONGS = ROTATION_SONGS[:args.count]
+    SINGER_COUNT = args.singer_count
 
     port = args.port
     server = HTTPServer(("0.0.0.0", port), Handler)
     print(f"Mock kroak-time server on http://localhost:{port}/api/state")
-    print(f"{len(ROTATION_SONGS)} singers in rotation, {len(WAITING_SONGS)} waiting.")
+    print(f"{len(ROTATION_SONGS)} singers in rotation, {len(WAITING_SONGS)} waiting, "
+          f"reported singer_count={SINGER_COUNT} ({'unlimited' if SINGER_COUNT == 0 else 'capped'}).")
     print("No auto-advance. Step with: curl http://localhost:7070/advance")
     print("Press Ctrl+C to stop.\n")
     try:
