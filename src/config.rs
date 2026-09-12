@@ -139,7 +139,7 @@ fn default_show_every_n_singers() -> u32 {
     8
 }
 fn default_count_legend() -> String {
-    "{count} singers in the queue".to_string()
+    "{count} singers".to_string()
 }
 fn default_time_legend() -> String {
     "{time} to get through the queue".to_string()
@@ -340,7 +340,7 @@ const CONFIG_HEADER: &str = r##"# kroak-time-ticker configuration
 # precise_duration = false   # false = friendly rounded wording ("about an hour and a half",
 #                             # rounded to 15-minute increments). true = precise wording
 #                             # ("2 hours 1 minute").
-# count_legend = "{count} singers in the queue"          # {count} is replaced with the number.
+# count_legend = "{count} singers"          # {count} is replaced with the number.
 # time_legend = "{time} to get through the queue"  # {time} is replaced with the duration.
 #                             # Note: the rounded formatter already prepends its own "about"
 #                             # (e.g. "about an hour and a half") — don't add another one here.

@@ -28,7 +28,7 @@
 # precise_duration = false   # false = friendly rounded wording ("about an hour and a half",
 #                             # rounded to 15-minute increments). true = precise wording
 #                             # ("2 hours 1 minute").
-# count_legend = "{count} singers in the queue"          # {count} is replaced with the number.
+# count_legend = "{count} singers"          # {count} is replaced with the number.
 # time_legend = "{time} to get through the queue"  # {time} is replaced with the duration.
 #                             # Note: the rounded formatter already prepends its own "about"
 #                             # (e.g. "about an hour and a half") — don't add another one here.
@@ -64,7 +64,7 @@ empty_then_text = ["Just scan the QR code", "Or Fill Out A Slip"]
 show_at_start = true
 show_every_n_singers = 8
 precise_duration = false
-count_legend = "{count} singers in the queue"
+count_legend = "{count} singers"
 time_legend = "{time} to get through the queue"
 
 [scroll]

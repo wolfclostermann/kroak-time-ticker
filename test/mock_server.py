@@ -8,12 +8,16 @@ background timer. This makes tests deterministic: step through singers
 one at a time (e.g. via curl) and check the ticker's state after each step,
 instead of racing a wall-clock cycle.
 
-Run:  python3 test/mock_server.py
+Run:  python3 test/mock_server.py [--count N] [--port N]
 Then: cargo run -- --upstream-url http://localhost:7070/api/state
 Step: curl http://localhost:7070/advance   (repeat to move to the next singer)
 Reset: curl http://localhost:7070/reset
+
+--count trims the rotation to the first N singers (max 32, the built-in
+list's length); it does not synthesize extra ones beyond that.
 """
 
+import argparse
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -157,7 +161,17 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    port = 7070
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--count", type=int, default=len(ROTATION_SONGS),
+                         help=f"singers in rotation, 1-{len(ROTATION_SONGS)} (default: all)")
+    parser.add_argument("--port", type=int, default=7070)
+    args = parser.parse_args()
+
+    if not (1 <= args.count <= len(ROTATION_SONGS)):
+        parser.error(f"--count must be between 1 and {len(ROTATION_SONGS)}")
+    ROTATION_SONGS = ROTATION_SONGS[:args.count]
+
+    port = args.port
     server = HTTPServer(("0.0.0.0", port), Handler)
     print(f"Mock kroak-time server on http://localhost:{port}/api/state")
     print(f"{len(ROTATION_SONGS)} singers in rotation, {len(WAITING_SONGS)} waiting.")
