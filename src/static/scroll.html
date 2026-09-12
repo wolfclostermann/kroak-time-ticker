@@ -109,36 +109,12 @@
   const FAIRNESS_SEG = '<span class="seg fairness-note">The queue order will change to make sure everyone gets a fair turn</span>';
 
   // ── Queue info (singer count + estimated queue time) ───────────────────────
-
-  let queueInfoShownOnce = false;
-  let singersSinceInfo   = 0;
-  let lastCurrentName; // undefined until the first real state arrives
-
-  function trackSingerAdvance(s) {
-    const curName = (s && s.current_singer) ? s.current_singer.name : null;
-    if (lastCurrentName === undefined) {
-      lastCurrentName = curName;
-      return;
-    }
-    if (curName !== lastCurrentName) {
-      singersSinceInfo++;
-      lastCurrentName = curName;
-    }
-  }
-
-  function shouldShowQueueInfo(cfg) {
-    if (!queueInfoShownOnce && cfg.show_at_start) {
-      queueInfoShownOnce = true;
-      singersSinceInfo   = 0;
-      return true;
-    }
-    if (cfg.show_every_n_singers > 0 && singersSinceInfo >= cfg.show_every_n_singers) {
-      queueInfoShownOnce = true;
-      singersSinceInfo   = 0;
-      return true;
-    }
-    return false;
-  }
+  //
+  // Placement is positional, computed fresh on every render — NOT tied to
+  // real-world singer turnover across polls. show_at_start puts one banner
+  // before NOW/NEXT; show_every_n_singers then splices another in after
+  // every Nth displayed entry (NOW and NEXT each count as one entry too,
+  // same as their position in the THEN numbering).
 
   function formatDurationPrecise(totalSeconds) {
     const mins  = Math.max(0, Math.round(totalSeconds / 60));
@@ -204,63 +180,79 @@
       return '<span class="seg" style="color:#666">Waiting for kroak-time…</span>';
     }
 
-    const parts     = [];
-    const skipNames = new Set();
-
-    if (s.rotation && s.rotation.length > 0) {
-      if (shouldShowQueueInfo(TICKER_CFG.queue_info)) {
-        parts.push(queueInfoHtml(s, TICKER_CFG.queue_info));
-      }
-
-      if (s.is_playing && s.current_singer) {
-        const c = s.current_singer;
-        parts.push(
-          `<span class="seg"><span class="lbl-now">NOW</span>` +
-          `<span class="singer-name">${esc(c.name)}</span>${songHtml(c)}</span>`
-        );
-        skipNames.add(c.name);
-      }
-
-      const nextSinger = s.is_playing ? s.next_up : s.current_singer;
-      if (nextSinger && !skipNames.has(nextSinger.name) && (TICKER_CFG.show_empty_singers || nextSinger.next_song_title)) {
-        parts.push(
-          `<span class="seg"><span class="lbl-next">NEXT</span>` +
-          `<span class="singer-name">${esc(nextSinger.name)}</span>${songHtml(nextSinger)}</span>`
-        );
-        skipNames.add(nextSinger.name);
-      }
-
-      // kroak-time's own setting (s.singer_count, via /api/state) is the source of
-      // truth; 0 there means unlimited. TICKER_CFG.singer_count is a local override
-      // that only applies when set >0, to show fewer than kroak-time reports.
-      // TICKER_CFG.show_all_singers overrides both and always shows everyone.
-      const rest  = s.rotation.filter(r => !skipNames.has(r.name) && (TICKER_CFG.show_empty_singers || r.next_song_title));
-      const effectiveCount = TICKER_CFG.show_all_singers
-        ? 0
-        : (TICKER_CFG.singer_count > 0 ? TICKER_CFG.singer_count : (s.singer_count || 0));
-      const shown = effectiveCount > 0
-        ? rest.slice(0, Math.max(0, effectiveCount - skipNames.size))
-        : rest;
-
-      if (shown.length > 0) {
-        const entries = shown.map((r, i) => {
-          const num  = i + skipNames.size + 1;
-          let   html = `<span class="up-num">${num}.</span><span class="up-singer">${esc(r.name)}</span>`;
-          if (r.next_song_title) {
-            html += `<span class="up-song">${esc(r.next_song_title)}</span>`;
-          }
-          return html;
-        }).join('<span class="pipe">  </span>');
-
-        parts.push(`<span class="seg"><span class="lbl-up">THEN</span>${entries}</span>`);
-      }
-    }
-
-    if (parts.length === 0) {
+    if (!s.rotation || s.rotation.length === 0) {
       return buildEmptyContent();
     }
 
-    parts.push(FAIRNESS_SEG);
+    const cfg       = TICKER_CFG.queue_info;
+    const skipNames = new Set();
+    const banner    = () => [queueInfoHtml(s, cfg), FAIRNESS_SEG];
+
+    const parts = [];
+    if (cfg.show_at_start) parts.push(...banner());
+
+    // Position counter across the whole displayed list (NOW + NEXT + each
+    // THEN entry each count as one), so the banner lands after every Nth
+    // entry regardless of where NOW/NEXT push it into the THEN numbering.
+    let position = 0;
+
+    if (s.is_playing && s.current_singer) {
+      const c = s.current_singer;
+      parts.push(
+        `<span class="seg"><span class="lbl-now">NOW</span>` +
+        `<span class="singer-name">${esc(c.name)}</span>${songHtml(c)}</span>`
+      );
+      skipNames.add(c.name);
+      position++;
+      if (cfg.show_every_n_singers > 0 && position % cfg.show_every_n_singers === 0) parts.push(...banner());
+    }
+
+    const nextSinger = s.is_playing ? s.next_up : s.current_singer;
+    if (nextSinger && !skipNames.has(nextSinger.name) && (TICKER_CFG.show_empty_singers || nextSinger.next_song_title)) {
+      parts.push(
+        `<span class="seg"><span class="lbl-next">NEXT</span>` +
+        `<span class="singer-name">${esc(nextSinger.name)}</span>${songHtml(nextSinger)}</span>`
+      );
+      skipNames.add(nextSinger.name);
+      position++;
+      if (cfg.show_every_n_singers > 0 && position % cfg.show_every_n_singers === 0) parts.push(...banner());
+    }
+
+    // kroak-time's own setting (s.singer_count, via /api/state) is the source of
+    // truth; 0 there means unlimited. TICKER_CFG.singer_count is a local override
+    // that only applies when set >0, to show fewer than kroak-time reports.
+    // TICKER_CFG.show_all_singers overrides both and always shows everyone.
+    const rest  = s.rotation.filter(r => !skipNames.has(r.name) && (TICKER_CFG.show_empty_singers || r.next_song_title));
+    const effectiveCount = TICKER_CFG.show_all_singers
+      ? 0
+      : (TICKER_CFG.singer_count > 0 ? TICKER_CFG.singer_count : (s.singer_count || 0));
+    const shown = effectiveCount > 0
+      ? rest.slice(0, Math.max(0, effectiveCount - skipNames.size))
+      : rest;
+
+    // Group THEN entries into chunks that break exactly at each Nth-position
+    // boundary, so the banner splices in between chunks (one "THEN" label
+    // per chunk) rather than after every single name.
+    let chunk = [];
+    const flushChunk = () => {
+      if (chunk.length === 0) return;
+      parts.push(`<span class="seg"><span class="lbl-up">THEN</span>${chunk.join('<span class="pipe">  </span>')}</span>`);
+      chunk = [];
+    };
+
+    shown.forEach((r, i) => {
+      const num  = i + skipNames.size + 1;
+      let   html = `<span class="up-num">${num}.</span><span class="up-singer">${esc(r.name)}</span>`;
+      if (r.next_song_title) html += `<span class="up-song">${esc(r.next_song_title)}</span>`;
+      chunk.push(html);
+      position++;
+      if (cfg.show_every_n_singers > 0 && position % cfg.show_every_n_singers === 0) {
+        flushChunk();
+        parts.push(...banner());
+      }
+    });
+    flushChunk();
+
     return parts.join('<span class="pipe">◆</span>');
   }
 
@@ -268,7 +260,6 @@
   const GAP = '<span style="display:inline-block;width:120px"></span>';
 
   function updateContent() {
-    trackSingerAdvance(state);
     const html = buildContent(state);
     // Each copy carries its own trailing gap so halfWidth lands exactly at
     // the start of copy 2, making the loop reset pixel-perfect.
