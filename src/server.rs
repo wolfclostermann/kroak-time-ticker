@@ -1,4 +1,5 @@
 use crate::config::Config;
+use crate::ngrok_tunnel;
 use crate::state::{fetch_state, KaraokeState};
 use anyhow::Result;
 use axum::{
@@ -92,16 +93,27 @@ pub async fn run(cfg: Config) -> Result<()> {
         .with_state(shared);
 
     let addr: SocketAddr = format!("{}:{}", cfg.server.bind_address, cfg.server.port).parse()?;
-
-    print_startup_info(cfg.server.port, &cfg.ticker.upstream_url);
-
     let listener = tokio::net::TcpListener::bind(addr).await?;
+
+    let forward_host = if cfg.server.bind_address == "0.0.0.0" {
+        "127.0.0.1"
+    } else {
+        &cfg.server.bind_address
+    };
+    let ngrok_handle = ngrok_tunnel::start(&cfg.ngrok, forward_host, cfg.server.port).await;
+
+    print_startup_info(
+        cfg.server.port,
+        &cfg.ticker.upstream_url,
+        ngrok_handle.as_ref().map(|t| t.url.as_str()),
+    );
+
     axum::serve(listener, app).await?;
 
     Ok(())
 }
 
-fn print_startup_info(port: u16, upstream_url: &str) {
+fn print_startup_info(port: u16, upstream_url: &str, ngrok_url: Option<&str>) {
     let local_ip = get_local_ip().unwrap_or_else(|| "<your-machine-ip>".to_string());
 
     println!();
@@ -117,6 +129,13 @@ fn print_startup_info(port: u16, upstream_url: &str) {
     println!("  Dashboard :  http://{local_ip}:{port}/");
     println!("  OBS Ticker:  http://{local_ip}:{port}/ticker");
     println!("  OBS Scroll:  http://{local_ip}:{port}/scroll");
+    if let Some(ngrok_url) = ngrok_url {
+        println!();
+        println!("  From anywhere via ngrok:");
+        println!("  Dashboard :  {ngrok_url}/");
+        println!("  OBS Ticker:  {ngrok_url}/ticker");
+        println!("  OBS Scroll:  {ngrok_url}/scroll");
+    }
     println!("────────────────────────────────────────────────");
     println!("Press Ctrl+C to stop.");
     println!();

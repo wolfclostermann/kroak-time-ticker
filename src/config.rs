@@ -12,6 +12,9 @@ pub struct Config {
 
     #[serde(default)]
     pub scroll: ScrollConfig,
+
+    #[serde(default)]
+    pub ngrok: NgrokConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -219,6 +222,36 @@ fn default_color_song()    -> String { "#ddd".into() }
 fn default_color_artist()  -> String { "#aaa".into() }
 fn default_color_info()    -> String { "#7cfc8a".into() }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct NgrokConfig {
+    /// Share the ticker over the internet via an ngrok tunnel, in addition to
+    /// serving it locally / on the LAN. Off by default.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// ngrok authtoken. Leave blank to fall back to the NGROK_AUTHTOKEN
+    /// environment variable. Get one at:
+    /// https://dashboard.ngrok.com/get-started/your-authtoken
+    #[serde(default)]
+    pub authtoken: String,
+
+    /// Reserved ngrok domain to use (e.g. "my-ticker.ngrok-free.app"), for
+    /// accounts with a static domain. Leave blank for a random ngrok-assigned
+    /// URL each time the ticker starts.
+    #[serde(default)]
+    pub domain: String,
+}
+
+impl Default for NgrokConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            authtoken: String::new(),
+            domain: String::new(),
+        }
+    }
+}
+
 fn default_port() -> u16 {
     8080
 }
@@ -260,6 +293,7 @@ impl Config {
                 server: ServerConfig::default(),
                 ticker: TickerConfig::default(),
                 scroll: ScrollConfig::default(),
+                ngrok: NgrokConfig::default(),
             };
             cfg.save(path)?;
             Ok(cfg)

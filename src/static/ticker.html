@@ -53,6 +53,7 @@
     position: relative;
   }
 
+
   #ticker-track {
     position: absolute;
     top: 50%;
@@ -82,6 +83,8 @@
   .up-num    { color: #666; margin-right: 4px; }
   .up-singer { color: #fff; font-weight: 600; }
   .up-song   { color: #888; font-style: italic; font-size: 0.85em; margin-left: 12px; }
+
+  .fairness-note { color: #aaa; font-style: italic; }
 </style>
 </head>
 <body>
@@ -122,6 +125,8 @@
     }
     return s;
   }
+
+  const FAIRNESS_SEG = '<span class="seg fairness-note">The queue order will change to make sure everyone gets a fair turn</span>';
 
   // ── Queue info (singer count + estimated queue time) ───────────────────────
 
@@ -211,7 +216,7 @@
     const thenEntries = thenItems.map(t => `<span class="up-singer">${esc(t)}</span>`).join('<span class="pipe">  </span>');
     const thenSeg = `<span class="seg"><span class="lbl-up">THEN</span>${thenEntries}</span>`;
 
-    return [nextSeg, thenSeg].join('<span class="pipe">◆</span>');
+    return [nextSeg, thenSeg, FAIRNESS_SEG].join('<span class="pipe">◆</span>');
   }
 
   function buildContent(s) {
@@ -278,6 +283,7 @@
       return buildEmptyContent();
     }
 
+    parts.push(FAIRNESS_SEG);
     return parts.join('<span class="pipe">◆</span>');
   }
 
