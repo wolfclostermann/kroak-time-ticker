@@ -8,7 +8,7 @@ background timer. This makes tests deterministic: step through singers
 one at a time (e.g. via curl) and check the ticker's state after each step,
 instead of racing a wall-clock cycle.
 
-Run:  python3 test/mock_server.py [--count N] [--port N] [--singer-count N]
+Run:  python3 test/mock_server.py [--count N] [--port N] [--singer-count N] [--no-sing-time]
 Then: cargo run -- --upstream-url http://localhost:7070/api/state
 Step: curl http://localhost:7070/advance   (repeat to move to the next singer)
 Reset: curl http://localhost:7070/reset
@@ -19,11 +19,17 @@ list's length); it does not synthesize extra ones beyond that.
 --singer-count sets the reported singer_count field in /api/state
 (mirrors kroak-time's real api_ticker_singer_count setting). Default 0
 means unlimited/show all, matching kroak-time's own default.
+
+--no-sing-time reports every singer's sings_in_secs/sings_at as null,
+simulating a kroak-time with rotation timing switched off. By default each
+singer gets a synthesized estimate counted round from the current singer
+(0 = now), using AVG_SONG_SECS + GAP_TIME_SECS per step.
 """
 
 import argparse
 import json
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # (name, artist, title) — title/artist None means "no song queued".
@@ -78,18 +84,28 @@ GAP_TIME_SECS = 45
 # unlimited (show every singer), set via --singer-count.
 SINGER_COUNT = 0
 
+# Mirrors kroak-time's Settings > Rotation "show estimated singing times"
+# toggle: when off, every singer's sings_in_secs/sings_at is null, same as a
+# real kroak-time with rotation timing disabled. Set via --no-sing-time.
+SING_TIME_ENABLED = True
+
 lock = threading.Lock()
 current_index = 0
 is_playing = True
 
 
-def singer_obj(entry, is_current):
+def singer_obj(entry, is_current, sings_in_secs=None):
     name, artist, title = entry
+    sings_at = None
+    if sings_in_secs is not None:
+        sings_at = int(time.time()) + sings_in_secs
     return {
         "name": name,
         "next_song_artist": artist,
         "next_song_title": title,
         "is_current": is_current,
+        "sings_in_secs": sings_in_secs,
+        "sings_at": sings_at,
     }
 
 
@@ -99,9 +115,23 @@ def build_state():
         playing = is_playing
 
     n = len(ROTATION_SONGS)
-    rotation = [singer_obj(entry, i == idx) for i, entry in enumerate(ROTATION_SONGS)]
+
+    def sing_in_secs_for(i):
+        if not SING_TIME_ENABLED:
+            return None
+        # Singing order starts from idx and wraps: current singer is 0,
+        # each later singer is one more song+gap further out.
+        step = (i - idx) % n
+        return step * (AVG_SONG_SECS + GAP_TIME_SECS)
+
+    rotation = [
+        singer_obj(entry, i == idx, sing_in_secs_for(i))
+        for i, entry in enumerate(ROTATION_SONGS)
+    ]
     current_singer = rotation[idx]
     next_up = rotation[(idx + 1) % n] if n > 1 else None
+    # Waiting singers have no rotation slot, so no estimate — always null,
+    # same as a real kroak-time.
     waiting = [
         {**singer_obj(entry, False), "is_waiting": True} for entry in WAITING_SONGS
     ]
@@ -175,6 +205,9 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=7070)
     parser.add_argument("--singer-count", type=int, default=0,
                          help="reported singer_count field (0 = unlimited/show all, default)")
+    parser.add_argument("--no-sing-time", action="store_true",
+                         help="report null sings_in_secs/sings_at for every singer, "
+                              "simulating kroak-time with rotation timing switched off")
     args = parser.parse_args()
 
     if not (1 <= args.count <= len(ROTATION_SONGS)):
@@ -183,12 +216,14 @@ if __name__ == "__main__":
         parser.error("--singer-count must be >= 0")
     ROTATION_SONGS = ROTATION_SONGS[:args.count]
     SINGER_COUNT = args.singer_count
+    SING_TIME_ENABLED = not args.no_sing_time
 
     port = args.port
     server = HTTPServer(("0.0.0.0", port), Handler)
     print(f"Mock kroak-time server on http://localhost:{port}/api/state")
     print(f"{len(ROTATION_SONGS)} singers in rotation, {len(WAITING_SONGS)} waiting, "
           f"reported singer_count={SINGER_COUNT} ({'unlimited' if SINGER_COUNT == 0 else 'capped'}).")
+    print(f"Singing-time estimates: {'enabled' if SING_TIME_ENABLED else 'disabled (--no-sing-time)'}.")
     print("No auto-advance. Step with: curl http://localhost:7070/advance")
     print("Press Ctrl+C to stop.\n")
     try:

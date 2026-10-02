@@ -20,6 +20,9 @@
 #                             # THEN list. Default false hides them.
 # empty_next_text = "Your Name Could Be Here"   # NEXT placeholder shown when rotation is empty.
 # empty_then_text = ["Just scan the QR code", "Or Fill Out A Slip"]   # THEN placeholder entries.
+# show_request_button = true # Show the "Request your song" button at the top of the
+#                             # dashboard (/). Can still be overridden per-view with
+#                             # ?request=0/1 in the URL regardless of this setting.
 #
 # [ticker.queue_info]        # Singer-count / queue-time banner: when and how to show it.
 # show_at_start = true       # Show the banner once as soon as the ticker loads.
@@ -32,6 +35,19 @@
 # time_legend = "{time} to get through the queue"  # {time} is replaced with the duration.
 #                             # Note: the rounded formatter already prepends its own "about"
 #                             # (e.g. "about an hour and a half") — don't add another one here.
+#
+# [ticker.sing_time]         # Per-singer estimated singing time, from kroak-time's
+#                             # sings_in_secs/sings_at (rotation-timing release). Null/absent
+#                             # upstream (timing off in kroak-time, or an older kroak-time)
+#                             # just means nothing is shown, even with this enabled.
+# enabled = false            # Master switch. Everything below only matters if this is true.
+# show_per_singer = false    # Show each singer's own time next to their name, everywhere
+#                             # they're listed (NOW/NEXT/THEN on /scroll, the table on /).
+# show_in_banner = false     # Instead of (or alongside) per-singer times, call out the time
+#                             # of whoever's up next right after each queue-info banner —
+#                             # including the recurring one from show_every_n_singers above.
+# format = "relative"        # "relative" = duration from now ("15m", "1h20m", "now").
+#                             # "clock" = absolute local time ("21:42").
 #
 # [scroll]                   # Visual styling for the 1920x1080 /scroll overlay.
 # height = 80                # Banner height in pixels.
@@ -59,6 +75,7 @@ show_all_singers = false
 show_empty_singers = false
 empty_next_text = "Your Name Could Be Here"
 empty_then_text = ["Just scan the QR code", "Or Fill Out A Slip"]
+show_request_button = true
 
 [ticker.queue_info]
 show_at_start = true
@@ -66,6 +83,12 @@ show_every_n_singers = 8
 precise_duration = false
 count_legend = "{count} singers"
 time_legend = "{time} to get through the queue"
+
+[ticker.sing_time]
+enabled = false
+show_per_singer = false
+show_in_banner = false
+format = "relative"
 
 [scroll]
 height = 80

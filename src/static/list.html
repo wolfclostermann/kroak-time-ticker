@@ -51,6 +51,19 @@
   #status-dot.warn { background: #e6a23c; }
   #status-dot.err  { background: #b03030; }
 
+  .queue-banner {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 20px;
+    margin-bottom: 20px;
+    font-size: 15px;
+    line-height: 1.5;
+  }
+
+  .queue-banner .info { font-weight: 700; color: var(--accent); }
+  .queue-banner .fair { color: var(--muted); font-style: italic; margin-left: 10px; }
+
   .cta-request {
     display: flex;
     align-items: center;
@@ -157,6 +170,10 @@
     vertical-align: middle;
   }
 
+  tbody td:first-child {
+    white-space: nowrap;
+  }
+
   .badge {
     display: inline-block;
     border-radius: 5px;
@@ -172,6 +189,13 @@
   .badge-now  { background: rgba(217,165,20,0.18); color: var(--now-color);  border: 1px solid rgba(217,165,20,0.35); }
   .badge-next { background: rgba(0,156,165,0.15);  color: var(--next-color); border: 1px solid rgba(0,156,165,0.3); }
   .badge-num  { background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
+
+  .sing-time {
+    color: var(--accent);
+    font-weight: 800;
+    font-size: 15px;
+    margin-left: 8px;
+  }
 
   .singer-name { font-weight: 600; }
 
@@ -204,6 +228,11 @@
   <div id="status-dot"></div>
 </header>
 
+<div class="queue-banner" id="queue-banner" hidden>
+  <span class="info" id="queue-banner-info"></span>
+  <span class="fair" id="queue-banner-fair"></span>
+</div>
+
 <a class="cta-request" id="cta-request" href="https://linktr.ee/wolflike" target="_blank" rel="noopener noreferrer">
   Request your song
 </a>
@@ -224,7 +253,7 @@
 <table>
   <thead>
     <tr>
-      <th style="width:60px">#</th>
+      <th style="width:120px">#</th>
       <th>Singer</th>
       <th>Next Song</th>
     </tr>
@@ -241,12 +270,18 @@
 <script>
   const TICKER_CFG = __TICKER_CFG__;
 
-  // "Request your song" button: shown by default, hide with ?request=0
-  // (also accepts false/off/no).
+  // "Request your song" button: TICKER_CFG.show_request_button sets the
+  // default (true unless configured off); ?request=0/1 (also accepts
+  // false/off/no and true/on/yes) overrides it per-view either way.
   (function () {
+    let show = TICKER_CFG.show_request_button !== false;
     const val = new URLSearchParams(location.search).get('request');
-    const hide = val !== null && ['0', 'false', 'off', 'no'].includes(val.toLowerCase());
-    if (hide) document.getElementById('cta-request').hidden = true;
+    if (val !== null) {
+      const v = val.toLowerCase();
+      if (['0', 'false', 'off', 'no'].includes(v)) show = false;
+      else if (['1', 'true', 'on', 'yes'].includes(v)) show = true;
+    }
+    if (!show) document.getElementById('cta-request').hidden = true;
   })();
 
   function esc(s) {
@@ -254,6 +289,90 @@
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;');
+  }
+
+  // ── Singer timing (kroak-time's sings_in_secs / sings_at) ───────────────────
+  const singCfg      = TICKER_CFG.sing_time || {};
+  const showSingTime = !!(singCfg.enabled && singCfg.show_per_singer);
+
+  // ── Queue banner (singer count + estimated queue time + fairness note) ──────
+  // Same wording as the ticker's queue-info banner and fairness note on /scroll.
+  function formatDurationPrecise(totalSeconds) {
+    const mins  = Math.max(0, Math.round(totalSeconds / 60));
+    const h     = Math.floor(mins / 60);
+    const m     = mins % 60;
+    const parts = [];
+    if (h > 0) parts.push(`${h} hour${h === 1 ? '' : 's'}`);
+    if (m > 0 || h === 0) parts.push(`${m} minute${m === 1 ? '' : 's'}`);
+    return parts.join(' ');
+  }
+
+  function formatDurationRounded(totalSeconds) {
+    const mins    = Math.max(0, Math.round(totalSeconds / 60));
+    const rounded = Math.round(mins / 15) * 15;
+    const h       = Math.floor(rounded / 60);
+    const q       = rounded % 60; // 0, 15, 30, 45
+
+    if (h === 0 && q === 0) return 'no time';
+    const hourPhrase = h === 1 ? 'an hour' : `${h} hours`;
+
+    if (h === 0) {
+      return q === 30 ? 'about half an hour' : `about ${q} minutes`;
+    }
+    if (q === 0)  return `about ${hourPhrase}`;
+    if (q === 30) return `about ${hourPhrase} and a half`;
+    return `about ${hourPhrase} and ${q} minutes`;
+  }
+
+  function formatQueueDuration(totalSeconds, cfg) {
+    return cfg.precise_duration
+      ? formatDurationPrecise(totalSeconds)
+      : formatDurationRounded(totalSeconds);
+  }
+
+  function queueBannerInfoText(s) {
+    const cfg      = TICKER_CFG.queue_info || {};
+    const count    = s.rotation ? s.rotation.length : 0;
+    const timeStr  = formatQueueDuration(s.queue_duration_secs || 0, cfg);
+    const countTxt = (cfg.count_legend || '{count} singers').replace('{count}', count);
+    const timeTxt  = (cfg.time_legend  || '{time} to get through the queue').replace('{time}', timeStr);
+    return `${countTxt} · ${timeTxt}`;
+  }
+
+  function queueBannerFairText() {
+    let text = 'The queue order will change to make sure everyone gets a fair turn';
+    if (showSingTime) text += ' — times shown are estimated and will change';
+    return text;
+  }
+
+  // Renders as "15m" / "1h20m" (relative) or "21:42" (clock); "now" for 0;
+  // null when timing is off upstream, the singer has no estimate, or the
+  // feature is disabled in config.
+  function formatSingTime(singer) {
+    if (!singCfg.enabled) return null;
+    const secs = singer.sings_in_secs;
+    if (secs == null || singer.sings_at == null) return null;
+
+    if (singCfg.format === 'clock') {
+      const d  = new Date(singer.sings_at * 1000);
+      const hh = String(d.getHours()).padStart(2, '0');
+      const mm = String(d.getMinutes()).padStart(2, '0');
+      return `${hh}:${mm}`;
+    }
+
+    if (secs <= 0) return 'now';
+    const mins = Math.round(secs / 60);
+    const h    = Math.floor(mins / 60);
+    const m    = mins % 60;
+    if (h === 0) return m === 0 ? '<1m' : `${m}m`;
+    return m === 0 ? `${h}h` : `${h}h${m}m`;
+  }
+
+  // Shown right next to the row's number/NOW/NEXT badge, in the same cell.
+  function singTimeBadge(singer) {
+    if (!showSingTime) return '';
+    const label = formatSingTime(singer);
+    return label ? `<span class="sing-time">${esc(label)}</span>` : '';
   }
 
   function songDisplay(singer) {
@@ -279,7 +398,8 @@
   }
 
   async function update() {
-    const dot = document.getElementById('status-dot');
+    const dot    = document.getElementById('status-dot');
+    const banner = document.getElementById('queue-banner');
 
     try {
       const r = await fetch('/api/state');
@@ -287,6 +407,7 @@
 
       if (s.status === 'not_ready' || s.status === 'database_not_found') {
         dot.className = 'warn';
+        banner.hidden = true;
         document.getElementById('now-name').textContent = '—';
         document.getElementById('next-name').textContent = '—';
         document.getElementById('tbody').innerHTML =
@@ -299,6 +420,9 @@
       }
 
       dot.className = 'ok';
+      banner.hidden = false;
+      document.getElementById('queue-banner-info').textContent = queueBannerInfoText(s);
+      document.getElementById('queue-banner-fair').textContent = queueBannerFairText();
 
       // When playing: current_singer is "Now Singing", next_up is "Up Next".
       // Between songs: current_singer (top of rotation) is "Up Next", "Now Singing" is empty.
@@ -357,7 +481,7 @@
         }
 
         return `<tr${rowClass}>
-          <td>${badgeHtml}</td>
+          <td>${badgeHtml}${isNow ? '' : singTimeBadge(singer)}</td>
           <td><span class="singer-name">${esc(singer.name)}</span></td>
           <td>${songHtml}</td>
         </tr>`;

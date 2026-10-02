@@ -75,9 +75,20 @@ pub struct TickerConfig {
     #[serde(default = "default_empty_then_text")]
     pub empty_then_text: Vec<String>,
 
+    /// Show the "Request your song" button at the top of the dashboard (/).
+    /// Default true. Can still be overridden per-view with ?request=0/1 in
+    /// the URL regardless of this setting.
+    #[serde(default = "default_true")]
+    pub show_request_button: bool,
+
     /// Singer-count / queue-time banner: when and how to show it.
     #[serde(default)]
     pub queue_info: QueueInfoConfig,
+
+    /// Per-singer estimated singing time (kroak-time's `sings_in_secs` /
+    /// `sings_at`): whether to show it at all, where, and how to format it.
+    #[serde(default)]
+    pub sing_time: SingTimeConfig,
 }
 
 impl Default for TickerConfig {
@@ -90,7 +101,9 @@ impl Default for TickerConfig {
             show_empty_singers: false,
             empty_next_text: default_empty_next_text(),
             empty_then_text: default_empty_then_text(),
+            show_request_button: default_true(),
             queue_info: QueueInfoConfig::default(),
+            sing_time: SingTimeConfig::default(),
         }
     }
 }
@@ -143,6 +156,48 @@ fn default_count_legend() -> String {
 }
 fn default_time_legend() -> String {
     "{time} to get through the queue".to_string()
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SingTimeConfig {
+    /// Master switch for showing kroak-time's estimated singing times
+    /// (`sings_in_secs` / `sings_at`) anywhere on the ticker. Default off —
+    /// everything below only takes effect when this is also true.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Show each singer's own estimated time next to their name, everywhere
+    /// they're listed (NOW/NEXT/THEN on /scroll, the rotation table on /).
+    #[serde(default)]
+    pub show_per_singer: bool,
+
+    /// Instead of (or alongside) per-singer times, call out the estimated
+    /// time of whoever's coming up right after the queue-info banner, each
+    /// time it shows — including the recurring one from
+    /// `queue_info.show_every_n_singers`. A lighter-touch way to share timing
+    /// periodically without a time next to every single name.
+    #[serde(default)]
+    pub show_in_banner: bool,
+
+    /// How to format a singing time: "relative" = duration from now ("15m",
+    /// "1h20m", "now" for 0), "clock" = absolute local time ("21:42").
+    #[serde(default = "default_sing_time_format")]
+    pub format: String,
+}
+
+impl Default for SingTimeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            show_per_singer: false,
+            show_in_banner: false,
+            format: default_sing_time_format(),
+        }
+    }
+}
+
+fn default_sing_time_format() -> String {
+    "relative".to_string()
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -332,6 +387,9 @@ const CONFIG_HEADER: &str = r##"# kroak-time-ticker configuration
 #                             # THEN list. Default false hides them.
 # empty_next_text = "Your Name Could Be Here"   # NEXT placeholder shown when rotation is empty.
 # empty_then_text = ["Just scan the QR code", "Or Fill Out A Slip"]   # THEN placeholder entries.
+# show_request_button = true # Show the "Request your song" button at the top of the
+#                             # dashboard (/). Can still be overridden per-view with
+#                             # ?request=0/1 in the URL regardless of this setting.
 #
 # [ticker.queue_info]        # Singer-count / queue-time banner: when and how to show it.
 # show_at_start = true       # Show the banner once as soon as the ticker loads.
@@ -344,6 +402,19 @@ const CONFIG_HEADER: &str = r##"# kroak-time-ticker configuration
 # time_legend = "{time} to get through the queue"  # {time} is replaced with the duration.
 #                             # Note: the rounded formatter already prepends its own "about"
 #                             # (e.g. "about an hour and a half") — don't add another one here.
+#
+# [ticker.sing_time]         # Per-singer estimated singing time, from kroak-time's
+#                             # sings_in_secs/sings_at (rotation-timing release). Null/absent
+#                             # upstream (timing off in kroak-time, or an older kroak-time)
+#                             # just means nothing is shown, even with this enabled.
+# enabled = false            # Master switch. Everything below only matters if this is true.
+# show_per_singer = false    # Show each singer's own time next to their name, everywhere
+#                             # they're listed (NOW/NEXT/THEN on /scroll, the table on /).
+# show_in_banner = false     # Instead of (or alongside) per-singer times, call out the time
+#                             # of whoever's up next right after each queue-info banner —
+#                             # including the recurring one from show_every_n_singers above.
+# format = "relative"        # "relative" = duration from now ("15m", "1h20m", "now").
+#                             # "clock" = absolute local time ("21:42").
 #
 # [scroll]                   # Visual styling for the 1920x1080 /scroll overlay.
 # height = 80                # Banner height in pixels.

@@ -7,6 +7,16 @@ pub struct Singer {
     pub next_song_artist: Option<String>,
     pub next_song_title: Option<String>,
     pub is_current: bool,
+    /// Estimated seconds from now until this singer next starts singing (0 =
+    /// on stage now). `null`/absent when kroak-time has rotation timing off,
+    /// the singer was skipped as empty, or an older kroak-time doesn't send
+    /// the field yet. `#[serde(default)]` keeps this ticker working against
+    /// that older kroak-time.
+    #[serde(default)]
+    pub sings_in_secs: Option<i64>,
+    /// The same estimate as a Unix timestamp (seconds), for clock-time display.
+    #[serde(default)]
+    pub sings_at: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
