@@ -4,6 +4,16 @@ kroak-time-ticker polls this endpoint every 1500 ms to drive its OBS overlays. I
 
 ---
 
+## What's new — estimated singing times (rotation-timing release)
+
+Every Singer object gains two fields, `sings_in_secs` and `sings_at` (see the Singer object
+table below). Both are raw values — this ticker owns formatting (absolute clock time or a
+relative "15m" / "1h20m" countdown) and whether to show them at all, per the
+`[ticker.sing_time]` section of `kroak-time-ticker.toml`. Nothing else in the response shape
+changed.
+
+---
+
 ## Endpoint
 
 ```
@@ -24,7 +34,8 @@ No authentication. No query parameters. Always returns JSON.
   "rotation":       <Singer[]>,
   "singer_count":   <integer>,
   "is_playing":     <boolean>,
-  "status":         <string>
+  "status":         <string>,
+  "queue_duration_secs": <integer>
 }
 ```
 
@@ -38,6 +49,7 @@ No authentication. No query parameters. Always returns JSON.
 | `singer_count` | integer | A display hint passed through to the ticker unchanged. Set it to however many singers beyond NOW/NEXT you want shown in the overlay (default: 8). |
 | `is_playing` | boolean | `true` when a song is actively being performed by `current_singer`. `false` between songs or when the rotation is idle. |
 | `status` | string | Health string (see Status values below). |
+| `queue_duration_secs` | integer | Raw estimated seconds for the full rotation to complete (sum of each singer's next queued song duration plus the gap between singers). This is deliberately unformatted — the ticker owns all display decisions (whether/when to show it, precise vs. rounded phrasing, legend text). See the `[ticker.queue_info]` section of `kroak-time-ticker.toml`. |
 
 ---
 
@@ -48,7 +60,9 @@ No authentication. No query parameters. Always returns JSON.
   "name":             <string>,
   "next_song_artist": <string | null>,
   "next_song_title":  <string | null>,
-  "is_current":       <boolean>
+  "is_current":       <boolean>,
+  "sings_in_secs":    <integer | null>,
+  "sings_at":         <integer | null>
 }
 ```
 
@@ -58,6 +72,11 @@ No authentication. No query parameters. Always returns JSON.
 | `next_song_artist` | string \| null | Artist of the singer's next queued song, or `null` if their queue is empty. |
 | `next_song_title` | string \| null | Title of the singer's next queued song, or `null` if their queue is empty. |
 | `is_current` | boolean | `true` only for the singer who matches `current_singer`. Set to `false` for all others, including `next_up`. |
+| `sings_in_secs` | integer \| null | Estimated seconds from now until this singer next starts singing. `0` for the singer performing now (or, between songs, the singer at the top of the rotation). `null` when kroak-time has rotation timing switched off, when the singer was skipped as empty, or from an older kroak-time that doesn't send the field. |
+| `sings_at` | integer \| null | The same estimate as a Unix timestamp (UTC epoch seconds): snapshot time + `sings_in_secs`. `null` whenever `sings_in_secs` is `null`. |
+
+Both fields are raw values; this ticker owns formatting and display (see
+`[ticker.sing_time]` in `kroak-time-ticker.toml`).
 
 ---
 
@@ -109,34 +128,40 @@ If a singer has no songs queued, set `next_song_artist` and `next_song_title` to
     "name": "Alice",
     "next_song_artist": "The Beatles",
     "next_song_title": "Let It Be",
-    "is_current": true
+    "is_current": true,
+    "sings_in_secs": 0,
+    "sings_at": 1791230400
   },
   "next_up": {
     "name": "Bob",
     "next_song_artist": "Journey",
     "next_song_title": "Don't Stop Believin'",
-    "is_current": false
+    "is_current": false,
+    "sings_in_secs": 185,
+    "sings_at": 1791230585
   },
   "rotation": [
-    { "name": "Alice", "next_song_artist": "The Beatles", "next_song_title": "Let It Be", "is_current": true },
-    { "name": "Bob",   "next_song_artist": "Journey",     "next_song_title": "Don't Stop Believin'", "is_current": false },
-    { "name": "Carol", "next_song_artist": null,           "next_song_title": null, "is_current": false }
+    { "name": "Alice", "next_song_artist": "The Beatles", "next_song_title": "Let It Be", "is_current": true, "sings_in_secs": 0, "sings_at": 1791230400 },
+    { "name": "Bob",   "next_song_artist": "Journey",     "next_song_title": "Don't Stop Believin'", "is_current": false, "sings_in_secs": 185, "sings_at": 1791230585 },
+    { "name": "Carol", "next_song_artist": null,           "next_song_title": null, "is_current": false, "sings_in_secs": 435, "sings_at": 1791230835 }
   ],
   "singer_count": 8,
   "is_playing": true,
-  "status": "ok"
+  "status": "ok",
+  "queue_duration_secs": 1980
 }
 ```
 
 **Between songs (rotation advanced, no song started yet):**
 ```json
 {
-  "current_singer": { "name": "Bob", "next_song_artist": "Journey", "next_song_title": "Don't Stop Believin'", "is_current": true },
-  "next_up":        { "name": "Carol", "next_song_artist": null, "next_song_title": null, "is_current": false },
+  "current_singer": { "name": "Bob", "next_song_artist": "Journey", "next_song_title": "Don't Stop Believin'", "is_current": true, "sings_in_secs": 0, "sings_at": 1791230400 },
+  "next_up":        { "name": "Carol", "next_song_artist": null, "next_song_title": null, "is_current": false, "sings_in_secs": 250, "sings_at": 1791230650 },
   "rotation": [ ... ],
   "singer_count": 8,
   "is_playing": false,
-  "status": "ok"
+  "status": "ok",
+  "queue_duration_secs": 1980
 }
 ```
 
@@ -148,6 +173,7 @@ If a singer has no songs queued, set `next_song_artist` and `next_song_title` to
   "rotation": [],
   "singer_count": 8,
   "is_playing": false,
-  "status": "not_ready"
+  "status": "not_ready",
+  "queue_duration_secs": 0
 }
 ```

@@ -12,7 +12,7 @@ use std::path::PathBuf;
     name = "kroak-time-ticker",
     about = "kroak-time rotation ticker for OBS",
     long_about = "Polls a kroak-time /api/state endpoint and serves a live rotation \
-                  ticker as a web page. Connect OBS Browser Source to /ticker or /scroll."
+                  ticker as a web page. Connect OBS Browser Source to /scroll."
 )]
 struct Args {
     /// Path to the config file (created with defaults if it does not exist).

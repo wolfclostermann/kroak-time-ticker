@@ -46,6 +46,12 @@
   .up-num     { color: #666; margin-right: 6px; }
   .up-singer  { font-weight: 600; }
   .up-song    { font-style: italic; font-size: 0.85em; margin-left: 12px; }
+  .fairness-note { color: #aaa; font-style: italic; }
+  .sing-time  {
+    font-weight: 800;
+    font-size: 1.15em;
+    margin-right: 12px;
+  }
 </style>
 </head>
 <body>
@@ -75,6 +81,8 @@
     .song-artist{ color: ${cfg.color_artist}; }
     .up-singer  { color: ${cfg.color_singer}; }
     .up-song    { color: ${cfg.color_artist}; }
+    .lbl-info   { color: ${cfg.color_info};   font-weight: 700; margin-right: 14px; }
+    .sing-time  { color: ${cfg.color_info}; }
   </style>`);
 
   // ── Scroll state ──────────────────────────────────────────────────────────
@@ -104,6 +112,109 @@
     return s;
   }
 
+  // The fairness note doubles as the disclaimer for singing-time estimates
+  // (when shown): both boil down to "the order/times you see now will move".
+  function fairnessSegHtml(singCfg) {
+    let text = 'The queue order will change to make sure everyone gets a fair turn';
+    if (singCfg && singCfg.enabled && (singCfg.show_per_singer || singCfg.show_in_banner)) {
+      text += ' — times shown are estimated and will change';
+    }
+    return `<span class="seg fairness-note">${esc(text)}</span>`;
+  }
+
+  // ── Singer timing (kroak-time's sings_in_secs / sings_at) ───────────────────
+
+  // Renders as "15m" / "1h20m" (relative) or "21:42" (clock); "now" for 0;
+  // null when timing is off upstream, the singer has no estimate, or the
+  // feature is disabled in config.
+  function formatSingTime(singer, singCfg) {
+    if (!singCfg || !singCfg.enabled) return null;
+    const secs = singer.sings_in_secs;
+    if (secs == null || singer.sings_at == null) return null;
+
+    if (singCfg.format === 'clock') {
+      const d  = new Date(singer.sings_at * 1000);
+      const hh = String(d.getHours()).padStart(2, '0');
+      const mm = String(d.getMinutes()).padStart(2, '0');
+      return `${hh}:${mm}`;
+    }
+
+    if (secs <= 0) return 'now';
+    const mins = Math.round(secs / 60);
+    const h    = Math.floor(mins / 60);
+    const m    = mins % 60;
+    if (h === 0) return m === 0 ? '<1m' : `${m}m`;
+    return m === 0 ? `${h}h` : `${h}h${m}m`;
+  }
+
+  function singTimeHtml(singer, singCfg) {
+    if (!singCfg || !singCfg.show_per_singer) return '';
+    const label = formatSingTime(singer, singCfg);
+    return label ? `<span class="sing-time">${esc(label)}</span>` : '';
+  }
+
+  // Short "up next" callout for the queue-info banner, naming whoever is
+  // about to appear right after it in the scroll.
+  function bannerSingTimeHtml(singer, singCfg) {
+    if (!singer || !singCfg || !singCfg.show_in_banner) return '';
+    const label = formatSingTime(singer, singCfg);
+    if (!label) return '';
+    const phrase = label === 'now' ? 'up now' : `up ${singCfg.format === 'clock' ? 'at' : 'in'} ${esc(label)}`;
+    return `<span class="seg sing-time">${esc(singer.name)} ${phrase}</span>`;
+  }
+
+  // ── Queue info (singer count + estimated queue time) ───────────────────────
+  //
+  // Placement is positional, computed fresh on every render — NOT tied to
+  // real-world singer turnover across polls. show_at_start puts one banner
+  // before NOW/NEXT; show_every_n_singers then splices another in after
+  // every Nth displayed entry (NOW and NEXT each count as one entry too,
+  // same as their position in the THEN numbering).
+
+  function formatDurationPrecise(totalSeconds) {
+    const mins  = Math.max(0, Math.round(totalSeconds / 60));
+    const h     = Math.floor(mins / 60);
+    const m     = mins % 60;
+    const parts = [];
+    if (h > 0) parts.push(`${h} hour${h === 1 ? '' : 's'}`);
+    if (m > 0 || h === 0) parts.push(`${m} minute${m === 1 ? '' : 's'}`);
+    return parts.join(' ');
+  }
+
+  function formatDurationRounded(totalSeconds) {
+    const mins    = Math.max(0, Math.round(totalSeconds / 60));
+    const rounded = Math.round(mins / 15) * 15;
+    const h       = Math.floor(rounded / 60);
+    const q       = rounded % 60; // 0, 15, 30, 45
+
+    if (h === 0 && q === 0) return 'no time';
+    const hourPhrase = h === 1 ? 'an hour' : `${h} hours`;
+
+    if (h === 0) {
+      return q === 30 ? 'about half an hour' : `about ${q} minutes`;
+    }
+    if (q === 0)  return `about ${hourPhrase}`;
+    if (q === 30) return `about ${hourPhrase} and a half`;
+    return `about ${hourPhrase} and ${q} minutes`;
+  }
+
+  function formatQueueDuration(totalSeconds, cfg) {
+    return cfg.precise_duration
+      ? formatDurationPrecise(totalSeconds)
+      : formatDurationRounded(totalSeconds);
+  }
+
+  function queueInfoHtml(s, cfg) {
+    const count    = s.rotation ? s.rotation.length : 0;
+    const timeStr  = formatQueueDuration(s.queue_duration_secs || 0, cfg);
+    const countTxt = (cfg.count_legend || '{count} singers in the queue').replace('{count}', count);
+    const timeTxt  = (cfg.time_legend  || 'about {time} to get through the queue').replace('{time}', timeStr);
+    return `<span class="seg"><span class="lbl-info">QUEUE</span>` +
+      `<span class="singer-name">${esc(countTxt)}</span>` +
+      `<span class="pipe">·</span>` +
+      `<span class="song-artist">${esc(timeTxt)}</span></span>`;
+  }
+
   function buildEmptyContent() {
     const nextText  = TICKER_CFG.empty_next_text || 'Your Name Could Be Here';
     const thenItems = (TICKER_CFG.empty_then_text && TICKER_CFG.empty_then_text.length)
@@ -116,7 +227,7 @@
     const thenEntries = thenItems.map(t => `<span class="up-singer">${esc(t)}</span>`).join('<span class="pipe">  </span>');
     const thenSeg = `<span class="seg"><span class="lbl-up">THEN</span>${thenEntries}</span>`;
 
-    return [nextSeg, thenSeg].join('<span class="pipe">◆</span>');
+    return [nextSeg, thenSeg, fairnessSegHtml(TICKER_CFG.sing_time)].join('<span class="pipe">◆</span>');
   }
 
   function buildContent(s) {
@@ -124,54 +235,95 @@
       return '<span class="seg" style="color:#666">Waiting for kroak-time…</span>';
     }
 
-    const parts     = [];
-    const skipNames = new Set();
-
-    if (s.rotation && s.rotation.length > 0) {
-      if (s.is_playing && s.current_singer) {
-        const c = s.current_singer;
-        parts.push(
-          `<span class="seg"><span class="lbl-now">NOW</span>` +
-          `<span class="singer-name">${esc(c.name)}</span>${songHtml(c)}</span>`
-        );
-        skipNames.add(c.name);
-      }
-
-      const nextSinger = s.is_playing ? s.next_up : s.current_singer;
-      if (nextSinger && !skipNames.has(nextSinger.name) && (TICKER_CFG.show_empty_singers || nextSinger.next_song_title)) {
-        parts.push(
-          `<span class="seg"><span class="lbl-next">NEXT</span>` +
-          `<span class="singer-name">${esc(nextSinger.name)}</span>${songHtml(nextSinger)}</span>`
-        );
-        skipNames.add(nextSinger.name);
-      }
-
-      // kroak-time's own setting (s.singer_count, via /api/state) is the source of
-      // truth; 0 there means unlimited. TICKER_CFG.singer_count is a local override
-      // that only applies when set >0, to show fewer than kroak-time reports.
-      const rest  = s.rotation.filter(r => !skipNames.has(r.name) && (TICKER_CFG.show_empty_singers || r.next_song_title));
-      const effectiveCount = TICKER_CFG.singer_count > 0 ? TICKER_CFG.singer_count : (s.singer_count || 0);
-      const shown = effectiveCount > 0
-        ? rest.slice(0, Math.max(0, effectiveCount - skipNames.size))
-        : rest;
-
-      if (shown.length > 0) {
-        const entries = shown.map((r, i) => {
-          const num  = i + skipNames.size + 1;
-          let   html = `<span class="up-num">${num}.</span><span class="up-singer">${esc(r.name)}</span>`;
-          if (r.next_song_title) {
-            html += `<span class="up-song">${esc(r.next_song_title)}</span>`;
-          }
-          return html;
-        }).join('<span class="pipe">  </span>');
-
-        parts.push(`<span class="seg"><span class="lbl-up">THEN</span>${entries}</span>`);
-      }
-    }
-
-    if (parts.length === 0) {
+    if (!s.rotation || s.rotation.length === 0) {
       return buildEmptyContent();
     }
+
+    const cfg     = TICKER_CFG.queue_info;
+    const singCfg = TICKER_CFG.sing_time;
+    const skipNames = new Set();
+
+    const nowSinger  = (s.is_playing && s.current_singer) ? s.current_singer : null;
+    if (nowSinger) skipNames.add(nowSinger.name);
+
+    const nextSinger = (s.is_playing ? s.next_up : s.current_singer);
+    const nextShown  = nextSinger && !skipNames.has(nextSinger.name) && (TICKER_CFG.show_empty_singers || nextSinger.next_song_title)
+      ? nextSinger
+      : null;
+    if (nextShown) skipNames.add(nextShown.name);
+
+    // kroak-time's own setting (s.singer_count, via /api/state) is the source of
+    // truth; 0 there means unlimited. TICKER_CFG.singer_count is a local override
+    // that only applies when set >0, to show fewer than kroak-time reports.
+    // TICKER_CFG.show_all_singers overrides both and always shows everyone.
+    const rest  = s.rotation.filter(r => !skipNames.has(r.name) && (TICKER_CFG.show_empty_singers || r.next_song_title));
+    const effectiveCount = TICKER_CFG.show_all_singers
+      ? 0
+      : (TICKER_CFG.singer_count > 0 ? TICKER_CFG.singer_count : (s.singer_count || 0));
+    const shown = effectiveCount > 0
+      ? rest.slice(0, Math.max(0, effectiveCount - skipNames.size))
+      : rest;
+
+    // Every entry that will actually render, in render order — lets a banner
+    // at position P name whoever's about to appear right after it
+    // (displayOrder[P]), rather than always repeating the same singer.
+    const displayOrder = [nowSinger, nextShown, ...shown].filter(Boolean);
+    const banner = (position) => {
+      const parts = [queueInfoHtml(s, cfg)];
+      const upcoming = bannerSingTimeHtml(displayOrder[position], singCfg);
+      if (upcoming) parts.push(upcoming);
+      parts.push(fairnessSegHtml(singCfg));
+      return parts;
+    };
+
+    const parts = [];
+    // Position counter across the whole displayed list (NOW + NEXT + each
+    // THEN entry each count as one), so the banner lands after every Nth
+    // entry regardless of where NOW/NEXT push it into the THEN numbering.
+    let position = 0;
+    if (cfg.show_at_start) parts.push(...banner(position));
+
+    if (nowSinger) {
+      // No time shown for the current singer — it's trivially "now".
+      parts.push(
+        `<span class="seg"><span class="lbl-now">NOW</span>` +
+        `<span class="singer-name">${esc(nowSinger.name)}</span>${songHtml(nowSinger)}</span>`
+      );
+      position++;
+      if (cfg.show_every_n_singers > 0 && position % cfg.show_every_n_singers === 0) parts.push(...banner(position));
+    }
+
+    if (nextShown) {
+      parts.push(
+        `<span class="seg"><span class="lbl-next">NEXT</span>${singTimeHtml(nextShown, singCfg)}` +
+        `<span class="singer-name">${esc(nextShown.name)}</span>${songHtml(nextShown)}</span>`
+      );
+      position++;
+      if (cfg.show_every_n_singers > 0 && position % cfg.show_every_n_singers === 0) parts.push(...banner(position));
+    }
+
+    // Group THEN entries into chunks that break exactly at each Nth-position
+    // boundary, so the banner splices in between chunks (one "THEN" label
+    // per chunk) rather than after every single name.
+    let chunk = [];
+    const flushChunk = () => {
+      if (chunk.length === 0) return;
+      parts.push(`<span class="seg"><span class="lbl-up">THEN</span>${chunk.join('<span class="pipe">  </span>')}</span>`);
+      chunk = [];
+    };
+
+    shown.forEach((r, i) => {
+      const num  = i + skipNames.size + 1;
+      let   html = `<span class="up-num">${num}.</span>${singTimeHtml(r, singCfg)}<span class="up-singer">${esc(r.name)}</span>`;
+      if (r.next_song_title) html += `<span class="up-song">${esc(r.next_song_title)}</span>`;
+      chunk.push(html);
+      position++;
+      if (cfg.show_every_n_singers > 0 && position % cfg.show_every_n_singers === 0) {
+        flushChunk();
+        parts.push(...banner(position));
+      }
+    });
+    flushChunk();
 
     return parts.join('<span class="pipe">◆</span>');
   }
