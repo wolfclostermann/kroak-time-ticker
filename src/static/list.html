@@ -21,6 +21,7 @@
     --muted:     #909c92;
     --dim:       #5a655c;
     --accent:    #54b05a;
+    --tiktok-pink: #fe2c55;
   }
 
   body {
@@ -64,6 +65,13 @@
   .queue-banner .info { font-weight: 700; color: var(--accent); }
   .queue-banner .fair { color: var(--muted); font-style: italic; margin-left: 10px; }
 
+  .cta-row {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+  }
+
   .cta-request {
     display: flex;
     align-items: center;
@@ -77,7 +85,8 @@
     text-decoration: none;
     border-radius: 10px;
     padding: 16px 20px;
-    margin-bottom: 24px;
+    flex: 1;
+    min-width: 200px;
     animation: cta-pulse 2s ease-in-out infinite;
   }
 
@@ -86,6 +95,40 @@
   @keyframes cta-pulse {
     0%, 100% { box-shadow: 0 0 0 0 rgba(84, 176, 90, 0.5); }
     50%      { box-shadow: 0 0 0 10px rgba(84, 176, 90, 0); }
+  }
+
+  .cta-tiktok {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-weight: 700;
+    font-size: 15px;
+    letter-spacing: 0.02em;
+    text-decoration: none;
+    border-radius: 10px;
+    padding: 16px 20px;
+    flex: 1;
+    min-width: 200px;
+  }
+
+  .cta-tiktok:hover { border-color: var(--tiktok-pink); }
+
+  .cta-tiktok .live-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--tiktok-pink);
+    animation: live-pulse 1.4s ease-in-out infinite;
+    flex-shrink: 0;
+  }
+
+  @keyframes live-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.35; }
   }
 
   .hero {
@@ -233,9 +276,14 @@
   <span class="fair" id="queue-banner-fair"></span>
 </div>
 
-<a class="cta-request" id="cta-request" href="https://linktr.ee/wolflike" target="_blank" rel="noopener noreferrer">
-  Request your song
-</a>
+<div class="cta-row">
+  <a class="cta-request" id="cta-request" href="https://linktr.ee/wolflike" target="_blank" rel="noopener noreferrer">
+    Request your song
+  </a>
+  <a class="cta-tiktok" href="https://tiktok.com/@lordjohnrussell/live" target="_blank" rel="noopener noreferrer">
+    <span class="live-dot"></span>Watch live on TikTok
+  </a>
+</div>
 
 <div class="hero">
   <div class="hero-card now" id="card-now">
