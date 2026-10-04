@@ -23,6 +23,8 @@
 # show_request_button = true # Show the "Request your song" button at the top of the
 #                             # dashboard (/). Can still be overridden per-view with
 #                             # ?request=0/1 in the URL regardless of this setting.
+# show_tiktok_live = false   # Show the "Watch live on TikTok" button beside the request button
+#                             # on the dashboard (/). Default false.
 #
 # [ticker.queue_info]        # Singer-count / queue-time banner: when and how to show it.
 # show_at_start = true       # Show the banner once as soon as the ticker loads.
@@ -76,6 +78,7 @@ show_empty_singers = false
 empty_next_text = "Your Name Could Be Here"
 empty_then_text = ["Just scan the QR code", "Or Fill Out A Slip"]
 show_request_button = true
+show_tiktok_live = false
 
 [ticker.queue_info]
 show_at_start = true
