@@ -88,10 +88,10 @@ count_legend = "{count} singers"
 time_legend = "{time} to get through the queue"
 
 [ticker.sing_time]
-enabled = false
-show_per_singer = false
+enabled = true
+show_per_singer = true
 show_in_banner = false
-format = "relative"
+format = "clock"
 
 [scroll]
 height = 80
