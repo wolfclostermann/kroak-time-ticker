@@ -116,6 +116,7 @@
   }
 
   .cta-tiktok:hover { border-color: var(--tiktok-pink); }
+  .cta-tiktok[hidden] { display: none; }
 
   .cta-tiktok .live-dot {
     width: 8px;
@@ -280,7 +281,7 @@
   <a class="cta-request" id="cta-request" href="https://linktr.ee/wolflike" target="_blank" rel="noopener noreferrer">
     Request your song
   </a>
-  <a class="cta-tiktok" href="https://tiktok.com/@lordjohnrussell/live" target="_blank" rel="noopener noreferrer">
+  <a class="cta-tiktok" id="cta-tiktok" href="https://tiktok.com/@lordjohnrussell/live" target="_blank" rel="noopener noreferrer" hidden>
     <span class="live-dot"></span>Watch live on TikTok
   </a>
 </div>
@@ -331,6 +332,12 @@
     }
     if (!show) document.getElementById('cta-request').hidden = true;
   })();
+
+  // "Watch live on TikTok" button: off unless TICKER_CFG.show_tiktok_live is
+  // true. Rendered hidden in the markup so it never flashes before this runs.
+  if (TICKER_CFG.show_tiktok_live === true) {
+    document.getElementById('cta-tiktok').hidden = false;
+  }
 
   function esc(s) {
     return String(s || '')

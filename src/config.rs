@@ -81,6 +81,11 @@ pub struct TickerConfig {
     #[serde(default = "default_true")]
     pub show_request_button: bool,
 
+    /// Show the "Watch live on TikTok" button beside the request button on
+    /// the dashboard (/). Default false.
+    #[serde(default)]
+    pub show_tiktok_live: bool,
+
     /// Singer-count / queue-time banner: when and how to show it.
     #[serde(default)]
     pub queue_info: QueueInfoConfig,
@@ -102,6 +107,7 @@ impl Default for TickerConfig {
             empty_next_text: default_empty_next_text(),
             empty_then_text: default_empty_then_text(),
             show_request_button: default_true(),
+            show_tiktok_live: false,
             queue_info: QueueInfoConfig::default(),
             sing_time: SingTimeConfig::default(),
         }
