@@ -1,3 +1,4 @@
 /target/
 openkj-ticker.toml
 .env
+kroak-time-ticker.log

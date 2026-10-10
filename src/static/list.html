@@ -279,21 +279,21 @@
 
 <div class="cta-row">
   <a class="cta-request" id="cta-request" href="https://linktr.ee/wolflike" target="_blank" rel="noopener noreferrer">
-    Request your song
+    <span id="cta-request-label">Request your song</span>
   </a>
   <a class="cta-tiktok" id="cta-tiktok" href="https://tiktok.com/@lordjohnrussell/live" target="_blank" rel="noopener noreferrer" hidden>
-    <span class="live-dot"></span>Watch live on TikTok
+    <span class="live-dot"></span><span id="cta-tiktok-label">Watch live on TikTok</span>
   </a>
 </div>
 
 <div class="hero">
   <div class="hero-card now" id="card-now">
-    <div class="label">Now Singing</div>
+    <div class="label" id="hero-now-label">Now Singing</div>
     <div class="name empty-hero" id="now-name">—</div>
     <div class="song" id="now-song"></div>
   </div>
   <div class="hero-card next" id="card-next">
-    <div class="label">Next Up</div>
+    <div class="label" id="hero-next-label">Next Up</div>
     <div class="name empty-hero" id="next-name">—</div>
     <div class="song" id="next-song"></div>
   </div>
@@ -323,6 +323,10 @@
   // default (true unless configured off); ?request=0/1 (also accepts
   // false/off/no and true/on/yes) overrides it per-view either way.
   (function () {
+    const el = document.getElementById('cta-request');
+    document.getElementById('cta-request-label').textContent = TICKER_CFG.request_button_text || 'Request your song';
+    if (TICKER_CFG.request_button_url) el.href = TICKER_CFG.request_button_url;
+
     let show = TICKER_CFG.show_request_button !== false;
     const val = new URLSearchParams(location.search).get('request');
     if (val !== null) {
@@ -330,14 +334,20 @@
       if (['0', 'false', 'off', 'no'].includes(v)) show = false;
       else if (['1', 'true', 'on', 'yes'].includes(v)) show = true;
     }
-    if (!show) document.getElementById('cta-request').hidden = true;
+    if (!show) el.hidden = true;
   })();
 
   // "Watch live on TikTok" button: off unless TICKER_CFG.show_tiktok_live is
   // true. Rendered hidden in the markup so it never flashes before this runs.
-  if (TICKER_CFG.show_tiktok_live === true) {
-    document.getElementById('cta-tiktok').hidden = false;
-  }
+  (function () {
+    const el = document.getElementById('cta-tiktok');
+    document.getElementById('cta-tiktok-label').textContent = TICKER_CFG.tiktok_button_text || 'Watch live on TikTok';
+    if (TICKER_CFG.tiktok_button_url) el.href = TICKER_CFG.tiktok_button_url;
+    if (TICKER_CFG.show_tiktok_live === true) el.hidden = false;
+  })();
+
+  document.getElementById('hero-now-label').textContent = TICKER_CFG.hero_now_label || 'Now Singing';
+  document.getElementById('hero-next-label').textContent = TICKER_CFG.hero_next_label || 'Next Up';
 
   function esc(s) {
     return String(s || '')
@@ -521,8 +531,8 @@
 
         let rowClass  = isNow ? ' class="row-now"' : (isNext ? ' class="row-next"' : '');
         let badgeHtml;
-        if (isNow)       badgeHtml = `<span class="badge badge-now">NOW</span>`;
-        else if (isNext) badgeHtml = `<span class="badge badge-next">NEXT</span>`;
+        if (isNow)       badgeHtml = `<span class="badge badge-now">${esc(TICKER_CFG.badge_now_text || 'NOW')}</span>`;
+        else if (isNext) badgeHtml = `<span class="badge badge-next">${esc(TICKER_CFG.badge_next_text || 'NEXT')}</span>`;
         else             badgeHtml = `<span class="badge badge-num">${i + 1}</span>`;
 
         const songTitle  = singer.next_song_title;

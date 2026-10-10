@@ -2,10 +2,13 @@ mod config;
 mod ngrok_tunnel;
 mod server;
 mod state;
+mod tui;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use std::path::PathBuf;
+use std::sync::{Arc, RwLock};
+use tokio::sync::Notify;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -38,6 +41,12 @@ struct Args {
     /// ngrok authtoken (overrides config / NGROK_AUTHTOKEN env var).
     #[arg(long)]
     ngrok_authtoken: Option<String>,
+
+    /// Run without the interactive config TUI — just the server and log
+    /// output, as before. Use this for background/service use (systemd,
+    /// launchd, etc.) where there's no interactive terminal.
+    #[arg(long)]
+    headless: bool,
 }
 
 /// Loads KEY=VALUE pairs from a `.env` file in the current directory into the
@@ -68,14 +77,29 @@ fn load_dotenv() {
 async fn main() -> Result<()> {
     load_dotenv();
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "kroak_time_ticker=debug".parse().unwrap()),
-        )
-        .init();
-
     let args = Args::parse();
+
+    let filter = || {
+        tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| "kroak_time_ticker=debug".parse().unwrap())
+    };
+
+    if args.headless {
+        tracing_subscriber::fmt().with_env_filter(filter()).init();
+    } else {
+        // The TUI owns the terminal (alternate screen + raw mode) — send logs
+        // to a file instead of stdout so a stray log line can't corrupt it.
+        let log_file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("kroak-time-ticker.log")
+            .context("Failed to open kroak-time-ticker.log")?;
+        tracing_subscriber::fmt()
+            .with_env_filter(filter())
+            .with_writer(std::sync::Mutex::new(log_file))
+            .with_ansi(false)
+            .init();
+    }
 
     let mut cfg = config::Config::load_or_create(&args.config)?;
 
@@ -96,5 +120,33 @@ async fn main() -> Result<()> {
         cfg.ngrok.authtoken = authtoken;
     }
 
-    server::run(cfg).await
+    let shared_cfg = Arc::new(RwLock::new(cfg));
+    let shutdown = Arc::new(Notify::new());
+
+    if args.headless {
+        let mut server_task = tokio::spawn(server::run(shared_cfg.clone(), shutdown.clone(), None));
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                shutdown.notify_one();
+            }
+            res = &mut server_task => {
+                return res?;
+            }
+        }
+        server_task.await??;
+    } else {
+        let (info_tx, info_rx) = std::sync::mpsc::channel();
+        let server_task = tokio::spawn(server::run(shared_cfg.clone(), shutdown.clone(), Some(info_tx)));
+
+        let tui_cfg = shared_cfg.clone();
+        let tui_shutdown = shutdown.clone();
+        let tui_path = args.config.clone();
+        tokio::task::spawn_blocking(move || tui::run(tui_cfg, tui_shutdown, tui_path, info_rx))
+            .await
+            .context("TUI thread panicked")??;
+
+        server_task.await??;
+    }
+
+    Ok(())
 }

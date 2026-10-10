@@ -81,10 +81,44 @@ pub struct TickerConfig {
     #[serde(default = "default_true")]
     pub show_request_button: bool,
 
+    /// Text of the "Request your song" button.
+    #[serde(default = "default_request_button_text")]
+    pub request_button_text: String,
+
+    /// URL the "Request your song" button links to.
+    #[serde(default = "default_request_button_url")]
+    pub request_button_url: String,
+
     /// Show the "Watch live on TikTok" button beside the request button on
     /// the dashboard (/). Default false.
     #[serde(default)]
     pub show_tiktok_live: bool,
+
+    /// Text of the "Watch live on TikTok" button.
+    #[serde(default = "default_tiktok_button_text")]
+    pub tiktok_button_text: String,
+
+    /// URL the "Watch live on TikTok" button links to.
+    #[serde(default = "default_tiktok_button_url")]
+    pub tiktok_button_url: String,
+
+    /// Label above the current singer's name on the dashboard (/).
+    #[serde(default = "default_hero_now_label")]
+    pub hero_now_label: String,
+
+    /// Label above the next singer's name on the dashboard (/).
+    #[serde(default = "default_hero_next_label")]
+    pub hero_next_label: String,
+
+    /// Text of the badge marking the current singer's row in the dashboard
+    /// rotation table.
+    #[serde(default = "default_badge_now_text")]
+    pub badge_now_text: String,
+
+    /// Text of the badge marking the next singer's row in the dashboard
+    /// rotation table.
+    #[serde(default = "default_badge_next_text")]
+    pub badge_next_text: String,
 
     /// Singer-count / queue-time banner: when and how to show it.
     #[serde(default)]
@@ -107,7 +141,15 @@ impl Default for TickerConfig {
             empty_next_text: default_empty_next_text(),
             empty_then_text: default_empty_then_text(),
             show_request_button: default_true(),
+            request_button_text: default_request_button_text(),
+            request_button_url: default_request_button_url(),
             show_tiktok_live: false,
+            tiktok_button_text: default_tiktok_button_text(),
+            tiktok_button_url: default_tiktok_button_url(),
+            hero_now_label: default_hero_now_label(),
+            hero_next_label: default_hero_next_label(),
+            badge_now_text: default_badge_now_text(),
+            badge_next_text: default_badge_next_text(),
             queue_info: QueueInfoConfig::default(),
             sing_time: SingTimeConfig::default(),
         }
@@ -249,6 +291,22 @@ pub struct ScrollConfig {
     /// Color of the "QUEUE" label on the singer-count / queue-time banner.
     #[serde(default = "default_color_info")]
     pub color_info: String,
+
+    /// Text of the "NOW" label before the current singer.
+    #[serde(default = "default_label_now")]
+    pub label_now: String,
+
+    /// Text of the "NEXT" label before the next singer.
+    #[serde(default = "default_label_next")]
+    pub label_next: String,
+
+    /// Text of the "THEN" label before each upcoming-singers group.
+    #[serde(default = "default_label_up")]
+    pub label_up: String,
+
+    /// Text of the "QUEUE" label on the singer-count / queue-time banner.
+    #[serde(default = "default_label_info")]
+    pub label_info: String,
 }
 
 impl Default for ScrollConfig {
@@ -266,6 +324,10 @@ impl Default for ScrollConfig {
             color_song:   default_color_song(),
             color_artist: default_color_artist(),
             color_info:   default_color_info(),
+            label_now:    default_label_now(),
+            label_next:   default_label_next(),
+            label_up:     default_label_up(),
+            label_info:   default_label_info(),
         }
     }
 }
@@ -281,6 +343,10 @@ fn default_color_up()      -> String { "#aaa".into() }
 fn default_color_singer()  -> String { "#fff".into() }
 fn default_color_song()    -> String { "#ddd".into() }
 fn default_color_artist()  -> String { "#aaa".into() }
+fn default_label_now()     -> String { "NOW".into() }
+fn default_label_next()    -> String { "NEXT".into() }
+fn default_label_up()      -> String { "THEN".into() }
+fn default_label_info()    -> String { "QUEUE".into() }
 fn default_color_info()    -> String { "#7cfc8a".into() }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -336,6 +402,30 @@ fn default_empty_then_text() -> Vec<String> {
         "Just scan the QR code".to_string(),
         "Or Fill Out A Slip".to_string(),
     ]
+}
+fn default_request_button_text() -> String {
+    "Request your song".to_string()
+}
+fn default_request_button_url() -> String {
+    "https://linktr.ee/wolflike".to_string()
+}
+fn default_tiktok_button_text() -> String {
+    "Watch live on TikTok".to_string()
+}
+fn default_tiktok_button_url() -> String {
+    "https://tiktok.com/@lordjohnrussell/live".to_string()
+}
+fn default_hero_now_label() -> String {
+    "Now Singing".to_string()
+}
+fn default_hero_next_label() -> String {
+    "Next Up".to_string()
+}
+fn default_badge_now_text() -> String {
+    "NOW".to_string()
+}
+fn default_badge_next_text() -> String {
+    "NEXT".to_string()
 }
 
 impl Config {
@@ -396,6 +486,16 @@ const CONFIG_HEADER: &str = r##"# kroak-time-ticker configuration
 # show_request_button = true # Show the "Request your song" button at the top of the
 #                             # dashboard (/). Can still be overridden per-view with
 #                             # ?request=0/1 in the URL regardless of this setting.
+# request_button_text = "Request your song"          # Text of that button.
+# request_button_url = "https://linktr.ee/wolflike"   # URL that button links to.
+# show_tiktok_live = false   # Show the "Watch live on TikTok" button beside the request
+#                             # button on the dashboard (/). Default false.
+# tiktok_button_text = "Watch live on TikTok"                  # Text of that button.
+# tiktok_button_url = "https://tiktok.com/@lordjohnrussell/live"   # URL that button links to.
+# hero_now_label = "Now Singing"   # Label above the current singer's name on the dashboard.
+# hero_next_label = "Next Up"      # Label above the next singer's name on the dashboard.
+# badge_now_text = "NOW"           # Badge text marking the current singer's row in the table.
+# badge_next_text = "NEXT"         # Badge text marking the next singer's row in the table.
 #
 # [ticker.queue_info]        # Singer-count / queue-time banner: when and how to show it.
 # show_at_start = true       # Show the banner once as soon as the ticker loads.
@@ -435,4 +535,8 @@ const CONFIG_HEADER: &str = r##"# kroak-time-ticker configuration
 # color_song = "#ddd"        # Song title color.
 # color_artist = "#aaa"      # Song artist color.
 # color_info = "#7cfc8a"     # "QUEUE" label color (singer-count / queue-time banner).
+# label_now = "NOW"          # Text of the "NOW" label before the current singer.
+# label_next = "NEXT"        # Text of the "NEXT" label before the next singer.
+# label_up = "THEN"          # Text of the "THEN" label before each upcoming-singers group.
+# label_info = "QUEUE"       # Text of the "QUEUE" label on the singer-count / queue-time banner.
 "##;

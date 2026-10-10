@@ -61,28 +61,28 @@
 
 <script>
   // ── Config (injected from kroak-time-ticker.toml at server startup) ──
-  const cfg        = __SCROLL_CFG__;
+  const SCROLL_CFG = __SCROLL_CFG__;
   const TICKER_CFG = __TICKER_CFG__;
 
   // Apply layout/style from config.
   const container = document.getElementById('container');
-  container.style.height     = cfg.height + 'px';
-  container.style.background = cfg.bg;
-  container.style.fontFamily = cfg.font;
-  container.style.fontSize   = cfg.size + 'px';
+  container.style.height     = SCROLL_CFG.height + 'px';
+  container.style.background = SCROLL_CFG.bg;
+  container.style.fontFamily = SCROLL_CFG.font;
+  container.style.fontSize   = SCROLL_CFG.size + 'px';
 
   // Inject color rules so the class rules pick them up.
   document.head.insertAdjacentHTML('beforeend', `<style>
-    .lbl-now    { color: ${cfg.color_now};    }
-    .lbl-next   { color: ${cfg.color_next};   }
-    .lbl-up     { color: ${cfg.color_up};     }
-    .singer-name{ color: ${cfg.color_singer}; }
-    .song-title { color: ${cfg.color_song};   }
-    .song-artist{ color: ${cfg.color_artist}; }
-    .up-singer  { color: ${cfg.color_singer}; }
-    .up-song    { color: ${cfg.color_artist}; }
-    .lbl-info   { color: ${cfg.color_info};   font-weight: 700; margin-right: 14px; }
-    .sing-time  { color: ${cfg.color_info}; }
+    .lbl-now    { color: ${SCROLL_CFG.color_now};    }
+    .lbl-next   { color: ${SCROLL_CFG.color_next};   }
+    .lbl-up     { color: ${SCROLL_CFG.color_up};     }
+    .singer-name{ color: ${SCROLL_CFG.color_singer}; }
+    .song-title { color: ${SCROLL_CFG.color_song};   }
+    .song-artist{ color: ${SCROLL_CFG.color_artist}; }
+    .up-singer  { color: ${SCROLL_CFG.color_singer}; }
+    .up-song    { color: ${SCROLL_CFG.color_artist}; }
+    .lbl-info   { color: ${SCROLL_CFG.color_info};   font-weight: 700; margin-right: 14px; }
+    .sing-time  { color: ${SCROLL_CFG.color_info}; }
   </style>`);
 
   // ── Scroll state ──────────────────────────────────────────────────────────
@@ -209,7 +209,7 @@
     const timeStr  = formatQueueDuration(s.queue_duration_secs || 0, cfg);
     const countTxt = (cfg.count_legend || '{count} singers in the queue').replace('{count}', count);
     const timeTxt  = (cfg.time_legend  || 'about {time} to get through the queue').replace('{time}', timeStr);
-    return `<span class="seg"><span class="lbl-info">QUEUE</span>` +
+    return `<span class="seg"><span class="lbl-info">${esc(SCROLL_CFG.label_info)}</span>` +
       `<span class="singer-name">${esc(countTxt)}</span>` +
       `<span class="pipe">·</span>` +
       `<span class="song-artist">${esc(timeTxt)}</span></span>`;
@@ -221,11 +221,11 @@
       ? TICKER_CFG.empty_then_text
       : ['Just scan the QR code', 'Or Fill Out A Slip'];
 
-    const nextSeg = `<span class="seg"><span class="lbl-next">NEXT</span>` +
+    const nextSeg = `<span class="seg"><span class="lbl-next">${esc(SCROLL_CFG.label_next)}</span>` +
       `<span class="singer-name">${esc(nextText)}</span></span>`;
 
     const thenEntries = thenItems.map(t => `<span class="up-singer">${esc(t)}</span>`).join('<span class="pipe">  </span>');
-    const thenSeg = `<span class="seg"><span class="lbl-up">THEN</span>${thenEntries}</span>`;
+    const thenSeg = `<span class="seg"><span class="lbl-up">${esc(SCROLL_CFG.label_up)}</span>${thenEntries}</span>`;
 
     return [nextSeg, thenSeg, fairnessSegHtml(TICKER_CFG.sing_time)].join('<span class="pipe">◆</span>');
   }
@@ -286,7 +286,7 @@
     if (nowSinger) {
       // No time shown for the current singer — it's trivially "now".
       parts.push(
-        `<span class="seg"><span class="lbl-now">NOW</span>` +
+        `<span class="seg"><span class="lbl-now">${esc(SCROLL_CFG.label_now)}</span>` +
         `<span class="singer-name">${esc(nowSinger.name)}</span>${songHtml(nowSinger)}</span>`
       );
       position++;
@@ -295,7 +295,7 @@
 
     if (nextShown) {
       parts.push(
-        `<span class="seg"><span class="lbl-next">NEXT</span>${singTimeHtml(nextShown, singCfg)}` +
+        `<span class="seg"><span class="lbl-next">${esc(SCROLL_CFG.label_next)}</span>${singTimeHtml(nextShown, singCfg)}` +
         `<span class="singer-name">${esc(nextShown.name)}</span>${songHtml(nextShown)}</span>`
       );
       position++;
@@ -308,7 +308,7 @@
     let chunk = [];
     const flushChunk = () => {
       if (chunk.length === 0) return;
-      parts.push(`<span class="seg"><span class="lbl-up">THEN</span>${chunk.join('<span class="pipe">  </span>')}</span>`);
+      parts.push(`<span class="seg"><span class="lbl-up">${esc(SCROLL_CFG.label_up)}</span>${chunk.join('<span class="pipe">  </span>')}</span>`);
       chunk = [];
     };
 
@@ -356,7 +356,7 @@
 
     if (lastTs !== null && halfWidth > 0) {
       const delta = (ts - lastTs) / 1000;
-      scrollX += cfg.speed * delta;
+      scrollX += SCROLL_CFG.speed * delta;
       if (scrollX >= halfWidth) scrollX -= halfWidth;
       track.style.transform = `translateY(-50%) translateX(${-scrollX}px)`;
     }

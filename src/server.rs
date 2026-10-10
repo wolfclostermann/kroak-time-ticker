@@ -13,10 +13,32 @@ use std::{
     net::SocketAddr,
     sync::{Arc, RwLock},
 };
-use tokio::time::{interval, Duration};
+use tokio::sync::Notify;
+use tokio::time::Duration;
 use tower_http::cors::CorsLayer;
 
+pub type SharedConfig = Arc<RwLock<Config>>;
 type SharedState = Arc<RwLock<Option<KaraokeState>>>;
+
+/// URLs resolved once at startup (local IP lookup, ngrok tunnel). Either
+/// printed directly (headless) or handed to the TUI to show in its status
+/// pane, since the TUI owns the terminal and raw `println!`/log output
+/// would corrupt its display.
+#[derive(Debug, Clone)]
+pub struct StartupInfo {
+    pub upstream_url: String,
+    pub local_dashboard_url: String,
+    pub local_scroll_url: String,
+    pub local_api_url: String,
+    pub lan_dashboard_url: String,
+    pub lan_scroll_url: String,
+    pub ngrok_dashboard_url: Option<String>,
+    pub ngrok_scroll_url: Option<String>,
+    /// Set when `[ngrok]` is enabled but the tunnel failed to connect/start —
+    /// distinct from the `ngrok_*_url` fields just being `None` because
+    /// ngrok is disabled.
+    pub ngrok_error: Option<String>,
+}
 
 const LIST_HTML:   &str = include_str!("static/list.html");
 const SCROLL_HTML: &str = include_str!("static/scroll.html");
@@ -34,18 +56,31 @@ fn render_list_html(cfg: &crate::config::TickerConfig) -> String {
     )
 }
 
-pub async fn run(cfg: Config) -> Result<()> {
+/// Runs the HTTP server against a shared, live config: pages and the poll
+/// loop re-read `cfg` on every request/tick, so edits made through the TUI
+/// (which writes into the same `Arc<RwLock<Config>>`) take effect on the
+/// next page load or poll without a restart. `server.*` and `[ngrok]` are
+/// the exception — the listener and tunnel are only ever bound once, from
+/// the config snapshot at startup.
+pub async fn run(
+    cfg: SharedConfig,
+    shutdown: Arc<Notify>,
+    startup_info_tx: Option<std::sync::mpsc::Sender<StartupInfo>>,
+) -> Result<()> {
     let shared: SharedState = Arc::new(RwLock::new(None));
+    let startup = cfg.read().unwrap().clone();
 
-    // Background task: poll the upstream kroak-time API on a fixed interval.
+    // Background task: poll the upstream kroak-time API, re-reading the
+    // upstream URL and interval from the shared config every cycle.
     let poll_shared = shared.clone();
-    let poll_interval_ms = cfg.ticker.poll_interval_ms;
-    let upstream_url = cfg.ticker.upstream_url.clone();
+    let poll_cfg = cfg.clone();
 
     tokio::spawn(async move {
-        let mut ticker = interval(Duration::from_millis(poll_interval_ms));
         loop {
-            ticker.tick().await;
+            let (upstream_url, interval_ms) = {
+                let cfg = poll_cfg.read().unwrap();
+                (cfg.ticker.upstream_url.clone(), cfg.ticker.poll_interval_ms)
+            };
             match fetch_state(&upstream_url).await {
                 Ok(state) => {
                     *poll_shared.write().unwrap() = Some(state);
@@ -54,69 +89,101 @@ pub async fn run(cfg: Config) -> Result<()> {
                     tracing::warn!("Upstream fetch error: {}", e);
                 }
             }
+            tokio::time::sleep(Duration::from_millis(interval_ms)).await;
         }
     });
 
-    // Pre-render HTML pages once with the config baked in.
-    let scroll_html = Arc::new(render_scroll_html(&cfg.scroll, &cfg.ticker));
-    let scroll_html_route = scroll_html.clone();
-
-    let list_html = Arc::new(render_list_html(&cfg.ticker));
-    let list_html_route = list_html.clone();
+    let list_cfg = cfg.clone();
+    let scroll_cfg = cfg.clone();
 
     let app = Router::new()
-        .route("/", get(move || {
-            let html = list_html_route.clone();
-            async move { Html((*html).clone()) }
-        }))
-        .route("/scroll", get(move || {
-            let html = scroll_html_route.clone();
-            async move { Html((*html).clone()) }
-        }))
+        .route(
+            "/",
+            get(move || {
+                let cfg = list_cfg.clone();
+                async move {
+                    let cfg = cfg.read().unwrap();
+                    Html(render_list_html(&cfg.ticker))
+                }
+            }),
+        )
+        .route(
+            "/scroll",
+            get(move || {
+                let cfg = scroll_cfg.clone();
+                async move {
+                    let cfg = cfg.read().unwrap();
+                    Html(render_scroll_html(&cfg.scroll, &cfg.ticker))
+                }
+            }),
+        )
         .route("/api/state", get(api_state_handler))
         .layer(CorsLayer::permissive())
         .with_state(shared);
 
-    let addr: SocketAddr = format!("{}:{}", cfg.server.bind_address, cfg.server.port).parse()?;
+    let addr: SocketAddr = format!("{}:{}", startup.server.bind_address, startup.server.port).parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
-    let forward_host = if cfg.server.bind_address == "0.0.0.0" {
+    let forward_host = if startup.server.bind_address == "0.0.0.0" {
         "127.0.0.1"
     } else {
-        &cfg.server.bind_address
+        &startup.server.bind_address
     };
-    let ngrok_handle = ngrok_tunnel::start(&cfg.ngrok, forward_host, cfg.server.port).await;
+    let ngrok_status = ngrok_tunnel::start(&startup.ngrok, forward_host, startup.server.port).await;
+    let (ngrok_dashboard_url, ngrok_scroll_url, ngrok_error) = match &ngrok_status {
+        ngrok_tunnel::NgrokStatus::Disabled => (None, None, None),
+        ngrok_tunnel::NgrokStatus::Running(t) => (Some(format!("{}/", t.url)), Some(format!("{}/scroll", t.url)), None),
+        ngrok_tunnel::NgrokStatus::Failed(e) => (None, None, Some(e.clone())),
+    };
 
-    print_startup_info(
-        cfg.server.port,
-        &cfg.ticker.upstream_url,
-        ngrok_handle.as_ref().map(|t| t.url.as_str()),
-    );
+    let local_ip = get_local_ip().unwrap_or_else(|| "<your-machine-ip>".to_string());
+    let port = startup.server.port;
+    let info = StartupInfo {
+        upstream_url: startup.ticker.upstream_url.clone(),
+        local_dashboard_url: format!("http://localhost:{port}/"),
+        local_scroll_url: format!("http://localhost:{port}/scroll"),
+        local_api_url: format!("http://localhost:{port}/api/state"),
+        lan_dashboard_url: format!("http://{local_ip}:{port}/"),
+        lan_scroll_url: format!("http://{local_ip}:{port}/scroll"),
+        ngrok_dashboard_url,
+        ngrok_scroll_url,
+        ngrok_error,
+    };
 
-    axum::serve(listener, app).await?;
+    match startup_info_tx {
+        Some(tx) => {
+            let _ = tx.send(info);
+        }
+        None => print_startup_info(&info),
+    }
+
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move { shutdown.notified().await })
+        .await?;
 
     Ok(())
 }
 
-fn print_startup_info(port: u16, upstream_url: &str, ngrok_url: Option<&str>) {
-    let local_ip = get_local_ip().unwrap_or_else(|| "<your-machine-ip>".to_string());
-
+fn print_startup_info(info: &StartupInfo) {
     println!();
     println!("kroak-time-ticker is running");
     println!("────────────────────────────────────────────────");
-    println!("  Upstream  :  {upstream_url}");
-    println!("  Dashboard :  http://localhost:{port}/");
-    println!("  OBS Scroll:  http://localhost:{port}/scroll  (1920×1080)");
-    println!("  JSON API  :  http://localhost:{port}/api/state");
+    println!("  Upstream  :  {}", info.upstream_url);
+    println!("  Dashboard :  {}", info.local_dashboard_url);
+    println!("  OBS Scroll:  {}  (1920×1080)", info.local_scroll_url);
+    println!("  JSON API  :  {}", info.local_api_url);
     println!();
     println!("  From other machines on your network:");
-    println!("  Dashboard :  http://{local_ip}:{port}/");
-    println!("  OBS Scroll:  http://{local_ip}:{port}/scroll");
-    if let Some(ngrok_url) = ngrok_url {
+    println!("  Dashboard :  {}", info.lan_dashboard_url);
+    println!("  OBS Scroll:  {}", info.lan_scroll_url);
+    if let Some(ngrok_url) = &info.ngrok_dashboard_url {
         println!();
         println!("  From anywhere via ngrok:");
-        println!("  Dashboard :  {ngrok_url}/");
-        println!("  OBS Scroll:  {ngrok_url}/scroll");
+        println!("  Dashboard :  {ngrok_url}");
+        println!("  OBS Scroll:  {}", info.ngrok_scroll_url.as_deref().unwrap_or(""));
+    } else if let Some(err) = &info.ngrok_error {
+        println!();
+        println!("  ⚠ ngrok is enabled but could not connect: {err}");
     }
     println!("────────────────────────────────────────────────");
     println!("Press Ctrl+C to stop.");
