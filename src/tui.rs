@@ -517,16 +517,24 @@ fn step(
                 Ok((Mode::ListView { cursor: clamped }, false))
             }
             KeyCode::Enter => {
-                if let Some(l) = list_mut(&mut app.draft, Section::Ticker, 6) {
+                let new_len = if let Some(l) = list_mut(&mut app.draft, Section::Ticker, 6) {
                     if is_new {
                         l.push(buffer.clone());
                     } else if let Some(slot) = l.get_mut(cursor) {
                         *slot = buffer.clone();
                     }
-                }
+                    l.len()
+                } else {
+                    0
+                };
                 app.dirty = true;
-                app.status = "Entry saved (unsaved).".into();
-                Ok((Mode::ListView { cursor }, false))
+                if is_new {
+                    app.status = "Entry added (unsaved). Keep typing to add another, Esc when done.".into();
+                    Ok((Mode::ListEditing { cursor: new_len, buffer: String::new(), is_new: true }, false))
+                } else {
+                    app.status = "Entry saved (unsaved).".into();
+                    Ok((Mode::ListView { cursor }, false))
+                }
             }
             KeyCode::Backspace => {
                 buffer.pop();
@@ -634,7 +642,9 @@ fn draw(f: &mut Frame, app: &App) {
     match &app.mode {
         Mode::Editing { buffer, error } => draw_edit_popup(f, area, app, buffer, error.as_deref()),
         Mode::ListView { cursor } => draw_list_popup(f, area, app, *cursor, None),
-        Mode::ListEditing { cursor, buffer, .. } => draw_list_popup(f, area, app, *cursor, Some(buffer)),
+        Mode::ListEditing { cursor, buffer, is_new } => {
+            draw_list_popup(f, area, app, *cursor, Some((buffer.as_str(), *is_new)))
+        }
         Mode::ConfirmQuit => draw_confirm_popup(f, area),
         Mode::Normal => {}
     }
@@ -754,6 +764,23 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(Paragraph::new(text), area);
 }
 
+/// Like `centered_rect`, but with an exact row count instead of a
+/// percentage of the available height — used where the popup should be
+/// sized to its content rather than stretched to fill the screen.
+fn centered_rect_height(percent_x: u16, height: u16, r: Rect) -> Rect {
+    let height = height.min(r.height);
+    let top = (r.height - height) / 2;
+    let vertical = Rect { x: r.x, y: r.y + top, width: r.width, height };
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(vertical)[1]
+}
+
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let vertical = Layout::default()
         .direction(Direction::Vertical)
@@ -792,8 +819,18 @@ fn draw_edit_popup(f: &mut Frame, area: Rect, app: &App, buffer: &str, error: Op
     f.render_widget(Paragraph::new(lines).block(block).wrap(Wrap { trim: false }), popup);
 }
 
-fn draw_list_popup(f: &mut Frame, area: Rect, app: &App, cursor: usize, editing: Option<&str>) {
-    let popup = centered_rect(70, 60, area);
+fn draw_list_popup(f: &mut Frame, area: Rect, app: &App, cursor: usize, editing: Option<(&str, bool)>) {
+    let list = list_ref(&app.draft, Section::Ticker, 6).cloned().unwrap_or_default();
+
+    // Size the popup to its actual content (entries + borders + the edit box
+    // when open) instead of a fixed percentage of the screen. A fixed 60%
+    // height let the edit box land exactly on the Status panel's top border
+    // on small terminals, bleeding both boxes' borders onto the same row.
+    let list_rows = (list.len() as u16).max(1) + 2;
+    let edit_rows: u16 = if editing.is_some() { 3 } else { 0 };
+    let height = (list_rows + edit_rows).min(area.height.saturating_sub(2)).max(6);
+
+    let popup = centered_rect_height(70, height, area);
     f.render_widget(Clear, popup);
 
     let rows = if editing.is_some() {
@@ -804,8 +841,6 @@ fn draw_list_popup(f: &mut Frame, area: Rect, app: &App, cursor: usize, editing:
     } else {
         Layout::default().direction(Direction::Vertical).constraints([Constraint::Min(3)]).split(popup)
     };
-
-    let list = list_ref(&app.draft, Section::Ticker, 6).cloned().unwrap_or_default();
     let items: Vec<ListItem> = list
         .iter()
         .enumerate()
@@ -822,8 +857,13 @@ fn draw_list_popup(f: &mut Frame, area: Rect, app: &App, cursor: usize, editing:
     let title = "empty_then_text — ↑/↓ select · Enter edit · a add · d delete · Esc back";
     f.render_widget(List::new(items).block(Block::default().borders(Borders::ALL).title(title)), rows[0]);
 
-    if let Some(buf) = editing {
-        let edit_block = Block::default().borders(Borders::ALL).title("Entry text (Enter save · Esc cancel)");
+    if let Some((buf, is_new)) = editing {
+        let edit_title = if is_new {
+            "Entry text (Enter add & next · Esc done)"
+        } else {
+            "Entry text (Enter save · Esc cancel)"
+        };
+        let edit_block = Block::default().borders(Borders::ALL).title(edit_title);
         f.render_widget(Paragraph::new(format!("{buf}_")).block(edit_block), rows[1]);
     }
 }
