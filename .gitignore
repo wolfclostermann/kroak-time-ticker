@@ -2,3 +2,5 @@
 openkj-ticker.toml
 .env
 kroak-time-ticker.log
+song-requests.json
+catalog-cache.json

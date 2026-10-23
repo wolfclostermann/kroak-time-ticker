@@ -15,6 +15,9 @@ pub struct Config {
 
     #[serde(default)]
     pub ngrok: NgrokConfig,
+
+    #[serde(default)]
+    pub requests: RequestsConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -379,6 +382,52 @@ impl Default for NgrokConfig {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct RequestsConfig {
+    /// Turn the dashboard's request button into an in-page song request form
+    /// that sends requests to kroak-time. Default off (the button keeps
+    /// linking to `request_button_url`).
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Song catalog the form searches: a .csv/.tsv/.txt (with "artist" and
+    /// "title" header columns), a .json array of {artist, title}, or
+    /// kroak-time's catalog.redb. Blank = kroak-time's default catalog.redb
+    /// location, if it exists. See CATALOG_FORMAT.md.
+    #[serde(default)]
+    pub catalog_path: String,
+
+    /// kroak-time request-source definition file describing the API served
+    /// to kroak-time (address, operations, field names). Written with the
+    /// built-in default if missing; copy the same file into kroak-time's
+    /// request-sources folder.
+    #[serde(default = "default_contract_path")]
+    pub contract_path: String,
+
+    /// Most not-yet-handled requests one phone can have waiting at once.
+    /// 0 = unlimited.
+    #[serde(default = "default_max_pending_per_device")]
+    pub max_pending_per_device: usize,
+}
+
+impl Default for RequestsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            catalog_path: String::new(),
+            contract_path: default_contract_path(),
+            max_pending_per_device: default_max_pending_per_device(),
+        }
+    }
+}
+
+fn default_contract_path() -> String {
+    "request-source.toml".to_string()
+}
+fn default_max_pending_per_device() -> usize {
+    5
+}
+
 fn default_port() -> u16 {
     8080
 }
@@ -445,6 +494,7 @@ impl Config {
                 ticker: TickerConfig::default(),
                 scroll: ScrollConfig::default(),
                 ngrok: NgrokConfig::default(),
+                requests: RequestsConfig::default(),
             };
             cfg.save(path)?;
             Ok(cfg)
@@ -539,4 +589,17 @@ const CONFIG_HEADER: &str = r##"# kroak-time-ticker configuration
 # label_next = "NEXT"        # Text of the "NEXT" label before the next singer.
 # label_up = "THEN"          # Text of the "THEN" label before each upcoming-singers group.
 # label_info = "QUEUE"       # Text of the "QUEUE" label on the singer-count / queue-time banner.
+#
+# [requests]                 # In-page song requests on the dashboard (/), sent to kroak-time.
+# enabled = false            # When true, the request button (show_request_button /
+#                             # request_button_text above) opens a request form instead of
+#                             # linking to request_button_url.
+# catalog_path = ""          # .csv/.tsv/.txt with "artist" and "title" header columns, a .json
+#                             # array of {"artist", "title"}, or kroak-time's catalog.redb.
+#                             # Blank = kroak-time's default catalog.redb, if found. See
+#                             # CATALOG_FORMAT.md. Re-read automatically when the file changes.
+# contract_path = "request-source.toml"   # API served to kroak-time, as a kroak-time
+#                             # request-source definition (written with defaults if missing).
+#                             # Copy the same file into kroak-time's request-sources folder.
+# max_pending_per_device = 5 # Most waiting requests one phone can have. 0 = unlimited.
 "##;

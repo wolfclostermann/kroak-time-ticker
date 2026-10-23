@@ -1,14 +1,19 @@
+use crate::catalog::CatalogStore;
 use crate::config::Config;
+use crate::contract;
 use crate::ngrok_tunnel;
+use crate::requests::{NewRequest, RequestStore, SubmitError, MAX_FIELD_LEN};
 use crate::state::{fetch_state, KaraokeState};
 use anyhow::Result;
 use axum::{
     extract::State,
-    http::StatusCode,
-    response::{Html, IntoResponse, Json},
-    routing::get,
+    http::{header, HeaderMap, StatusCode},
+    response::{Html, IntoResponse, Json, Response},
+    routing::{get, post},
     Router,
 };
+use serde::Deserialize;
+use tower_http::compression::CompressionLayer;
 use std::{
     net::SocketAddr,
     sync::{Arc, RwLock},
@@ -38,6 +43,9 @@ pub struct StartupInfo {
     /// distinct from the `ngrok_*_url` fields just being `None` because
     /// ngrok is disabled.
     pub ngrok_error: Option<String>,
+    /// `None` when `[requests]` is disabled; otherwise the address kroak-time
+    /// should poll, or why the request contract couldn't be loaded.
+    pub request_server: Option<std::result::Result<String, String>>,
 }
 
 const LIST_HTML:   &str = include_str!("static/list.html");
@@ -49,11 +57,15 @@ fn render_scroll_html(scroll_cfg: &crate::config::ScrollConfig, ticker_cfg: &cra
         .replace("__TICKER_CFG__", &serde_json::to_string(ticker_cfg).expect("TickerConfig is always serializable"))
 }
 
-fn render_list_html(cfg: &crate::config::TickerConfig) -> String {
-    LIST_HTML.replace(
-        "__TICKER_CFG__",
-        &serde_json::to_string(cfg).expect("TickerConfig is always serializable"),
-    )
+fn render_list_html(cfg: &crate::config::TickerConfig, requests_cfg: &crate::config::RequestsConfig) -> String {
+    // Only what the page needs from [requests] — not file paths.
+    let requests_page_cfg = serde_json::json!({ "enabled": requests_cfg.enabled });
+    LIST_HTML
+        .replace(
+            "__TICKER_CFG__",
+            &serde_json::to_string(cfg).expect("TickerConfig is always serializable"),
+        )
+        .replace("__REQUESTS_CFG__", &requests_page_cfg.to_string())
 }
 
 /// Runs the HTTP server against a shared, live config: pages and the poll
@@ -93,8 +105,42 @@ pub async fn run(
         }
     });
 
+    // Song requests: the store, the catalog (loaded in the background so it's
+    // warm before the first singer opens the form), and the contract-driven
+    // server kroak-time polls. Like `server.*`, whether that server runs is
+    // decided once at startup.
+    let request_store = RequestStore::load();
+    let catalog = CatalogStore::new();
+    let request_server = if startup.requests.enabled {
+        let warm = catalog.clone();
+        let catalog_path = startup.requests.catalog_path.clone();
+        tokio::task::spawn_blocking(move || warm.refresh(&catalog_path));
+
+        let contract_path = std::path::PathBuf::from(&startup.requests.contract_path);
+        match contract::ensure_contract_file(&contract_path).and_then(|_| contract::load(&contract_path)) {
+            Ok(c) => {
+                let addr = c.listen;
+                let store = request_store.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = contract::run_server(c, store).await {
+                        tracing::error!("Request server stopped: {e:#}");
+                    }
+                });
+                Some(Ok(format!("http://{addr}/  (contract: {})", contract_path.display())))
+            }
+            Err(e) => {
+                tracing::error!("Request contract: {e:#}");
+                Some(Err(format!("{e:#}")))
+            }
+        }
+    } else {
+        None
+    };
+
     let list_cfg = cfg.clone();
     let scroll_cfg = cfg.clone();
+    let catalog_cfg = cfg.clone();
+    let submit_cfg = cfg.clone();
 
     let app = Router::new()
         .route(
@@ -103,8 +149,25 @@ pub async fn run(
                 let cfg = list_cfg.clone();
                 async move {
                     let cfg = cfg.read().unwrap();
-                    Html(render_list_html(&cfg.ticker))
+                    Html(render_list_html(&cfg.ticker, &cfg.requests))
                 }
+            }),
+        )
+        .route(
+            "/api/catalog",
+            get(move |headers: HeaderMap| {
+                let cfg = catalog_cfg.clone();
+                let catalog = catalog.clone();
+                async move { catalog_handler(cfg, catalog, headers).await }
+            })
+            .layer(CompressionLayer::new()),
+        )
+        .route(
+            "/api/request",
+            post(move |Json(body): Json<RequestBody>| {
+                let cfg = submit_cfg.clone();
+                let store = request_store.clone();
+                async move { submit_handler(cfg, store, body) }
             }),
         )
         .route(
@@ -148,6 +211,7 @@ pub async fn run(
         ngrok_dashboard_url,
         ngrok_scroll_url,
         ngrok_error,
+        request_server,
     };
 
     match startup_info_tx {
@@ -185,6 +249,17 @@ fn print_startup_info(info: &StartupInfo) {
         println!();
         println!("  ⚠ ngrok is enabled but could not connect: {err}");
     }
+    match &info.request_server {
+        Some(Ok(addr)) => {
+            println!();
+            println!("  Song requests for kroak-time:  {addr}");
+        }
+        Some(Err(err)) => {
+            println!();
+            println!("  ⚠ Song requests are enabled but the request contract failed: {err}");
+        }
+        None => {}
+    }
     println!("────────────────────────────────────────────────");
     println!("Press Ctrl+C to stop.");
     println!();
@@ -195,6 +270,123 @@ fn get_local_ip() -> Option<String> {
     let sock = UdpSocket::bind("0.0.0.0:0").ok()?;
     sock.connect("8.8.8.8:80").ok()?;
     sock.local_addr().ok().map(|a| a.ip().to_string())
+}
+
+/// `GET /api/catalog`: the whole catalog as one compact JSON blob (see
+/// catalog.rs), fetched by the singer page only after it has loaded. ETag +
+/// `no-cache` means repeat visits revalidate with a cheap 304.
+async fn catalog_handler(cfg: SharedConfig, catalog: CatalogStore, headers: HeaderMap) -> Response {
+    let (enabled, path) = {
+        let cfg = cfg.read().unwrap();
+        (cfg.requests.enabled, cfg.requests.catalog_path.clone())
+    };
+    if !enabled {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    // Cheap when nothing changed (one stat); reloads if the file did.
+    let refresher = catalog.clone();
+    let _ = tokio::task::spawn_blocking(move || refresher.refresh(&path)).await;
+
+    let Some(served) = catalog.current() else {
+        let msg = catalog.last_error().unwrap_or_else(|| "catalog not loaded".into());
+        tracing::warn!("Catalog requested but unavailable: {msg}");
+        // An empty catalog still lets singers type requests freehand.
+        return Json(serde_json::json!({ "artists": [], "songs": [] })).into_response();
+    };
+    let not_modified = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.split(',').any(|t| t.trim() == served.etag));
+    let common = [(header::ETAG, served.etag.clone()), (header::CACHE_CONTROL, "no-cache".to_string())];
+    if not_modified {
+        return (StatusCode::NOT_MODIFIED, common).into_response();
+    }
+    (
+        common,
+        [(header::CONTENT_TYPE, "application/json")],
+        served.json.clone(),
+    )
+        .into_response()
+}
+
+#[derive(Deserialize)]
+struct RequestBody {
+    #[serde(default)]
+    singer: String,
+    #[serde(default)]
+    artist: String,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    key_change: i32,
+    #[serde(default)]
+    device_id: String,
+    #[serde(default)]
+    fingerprint: String,
+    #[serde(default)]
+    in_catalog: bool,
+}
+
+fn clean(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(MAX_FIELD_LEN).collect()
+}
+
+/// `POST /api/request` from the singer page's request form.
+fn submit_handler(cfg: SharedConfig, store: RequestStore, body: RequestBody) -> Response {
+    let (enabled, max_pending) = {
+        let cfg = cfg.read().unwrap();
+        (cfg.requests.enabled, cfg.requests.max_pending_per_device)
+    };
+    let reply = |status: StatusCode, v: serde_json::Value| (status, Json(v)).into_response();
+    if !enabled {
+        return reply(StatusCode::NOT_FOUND, serde_json::json!({ "ok": false, "error": "Song requests are switched off." }));
+    }
+
+    let singer = clean(&body.singer);
+    let artist = clean(&body.artist);
+    let title = clean(&body.title);
+    if singer.is_empty() || title.is_empty() {
+        return reply(StatusCode::BAD_REQUEST, serde_json::json!({ "ok": false, "error": "Please fill in your name and a song title." }));
+    }
+    let fingerprint: String = body.fingerprint.chars().filter(|c| c.is_ascii_alphanumeric()).take(64).collect();
+    let mut device_id: String = body
+        .device_id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .take(64)
+        .collect();
+    if device_id.is_empty() {
+        // No usable localStorage id (old browser / JS error) — fall back to
+        // the fingerprint so the host still sees something stable.
+        device_id = format!("fp-{fingerprint}");
+    }
+
+    let new = NewRequest {
+        singer,
+        artist,
+        title,
+        key_change: body.key_change.clamp(-6, 6),
+        device_id,
+        fingerprint,
+        in_catalog: body.in_catalog,
+    };
+    match store.submit(new, max_pending) {
+        Ok(r) => {
+            tracing::info!(
+                "Song request #{} from {} ({}): {} — {} (key {:+})",
+                r.request_id, r.singer, r.device_code(), r.artist, r.title, r.key_change
+            );
+            reply(StatusCode::OK, serde_json::json!({ "ok": true, "request_id": r.request_id }))
+        }
+        Err(SubmitError::NotAccepting) => reply(
+            StatusCode::SERVICE_UNAVAILABLE,
+            serde_json::json!({ "ok": false, "error": "Requests are closed right now — please ask the host." }),
+        ),
+        Err(SubmitError::TooManyPending(n)) => reply(
+            StatusCode::TOO_MANY_REQUESTS,
+            serde_json::json!({ "ok": false, "error": format!("You already have {n} requests waiting — give the host a chance to add them first.") }),
+        ),
+    }
 }
 
 async fn api_state_handler(State(state): State<SharedState>) -> impl IntoResponse {

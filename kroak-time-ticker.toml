@@ -23,8 +23,16 @@
 # show_request_button = true # Show the "Request your song" button at the top of the
 #                             # dashboard (/). Can still be overridden per-view with
 #                             # ?request=0/1 in the URL regardless of this setting.
-# show_tiktok_live = false   # Show the "Watch live on TikTok" button beside the request button
-#                             # on the dashboard (/). Default false.
+# request_button_text = "Request your song"          # Text of that button.
+# request_button_url = "https://linktr.ee/wolflike"   # URL that button links to.
+# show_tiktok_live = false   # Show the "Watch live on TikTok" button beside the request
+#                             # button on the dashboard (/). Default false.
+# tiktok_button_text = "Watch live on TikTok"                  # Text of that button.
+# tiktok_button_url = "https://tiktok.com/@lordjohnrussell/live"   # URL that button links to.
+# hero_now_label = "Now Singing"   # Label above the current singer's name on the dashboard.
+# hero_next_label = "Next Up"      # Label above the next singer's name on the dashboard.
+# badge_now_text = "NOW"           # Badge text marking the current singer's row in the table.
+# badge_next_text = "NEXT"         # Badge text marking the next singer's row in the table.
 #
 # [ticker.queue_info]        # Singer-count / queue-time banner: when and how to show it.
 # show_at_start = true       # Show the banner once as soon as the ticker loads.
@@ -64,6 +72,10 @@
 # color_song = "#ddd"        # Song title color.
 # color_artist = "#aaa"      # Song artist color.
 # color_info = "#7cfc8a"     # "QUEUE" label color (singer-count / queue-time banner).
+# label_now = "NOW"          # Text of the "NOW" label before the current singer.
+# label_next = "NEXT"        # Text of the "NEXT" label before the next singer.
+# label_up = "THEN"          # Text of the "THEN" label before each upcoming-singers group.
+# label_info = "QUEUE"       # Text of the "QUEUE" label on the singer-count / queue-time banner.
 
 [server]
 port = 8080
@@ -71,14 +83,25 @@ bind_address = "0.0.0.0"
 
 [ticker]
 upstream_url = "http://localhost:8765/api/state"
-poll_interval_ms = 1500
 singer_count = 0
 show_all_singers = false
+poll_interval_ms = 1500
 show_empty_singers = false
 empty_next_text = "Your Name Could Be Here"
-empty_then_text = ["Just scan the QR code", "Or Fill Out A Slip"]
-show_request_button = true
-show_tiktok_live = false
+empty_then_text = [
+    "Just fill out a slip",
+    "impress a room full of strangers",
+]
+show_request_button = false
+request_button_text = "Request your song"
+request_button_url = "https://linktr.ee/wolflike"
+show_tiktok_live = true
+tiktok_button_text = "Watch live on TikTok"
+tiktok_button_url = "https://tiktok.com/@lordjohnrussell/live"
+hero_now_label = "Now Singing"
+hero_next_label = "Next Up"
+badge_now_text = "NOW"
+badge_next_text = "NEXT"
 
 [ticker.queue_info]
 show_at_start = true
@@ -106,12 +129,18 @@ color_singer = "#fff"
 color_song = "#ddd"
 color_artist = "#aaa"
 color_info = "#7cfc8a"
+label_now = "NOW"
+label_next = "NEXT"
+label_up = "THEN"
+label_info = "QUEUE"
 
 [ngrok]
-# Uses its own dedicated ngrok account (separate from Mervyn's), so no
-# concurrent-endpoint conflict.
 enabled = true
-# authtoken left blank on purpose: set NGROK_AUTHTOKEN in .env (gitignored) instead
-# of committing the secret here.
 authtoken = ""
 domain = "cortex-prompter-refract.ngrok-free.dev"
+
+[requests]
+enabled = true
+catalog_path = ""
+contract_path = "request-source.toml"
+max_pending_per_device = 5

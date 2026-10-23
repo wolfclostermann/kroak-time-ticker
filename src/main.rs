@@ -1,5 +1,8 @@
+mod catalog;
 mod config;
+mod contract;
 mod ngrok_tunnel;
+mod requests;
 mod server;
 mod state;
 mod tui;
