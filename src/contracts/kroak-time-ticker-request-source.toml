@@ -1,0 +1,69 @@
+# kroak-time-ticker song-request API contract.
+#
+# This is a kroak-time request-source definition (kroak-time's
+# src/request_source/ schema, schema_version 1) — the SAME file drives both
+# sides:
+#
+#   * kroak-time-ticker reads it to decide what to serve: it listens on
+#     [config].base_url, recognises each operation by the literal (non-
+#     placeholder) values in its body template, binds {request_id} /
+#     {accepting} from the incoming body, and builds its responses at the
+#     `extract` paths below.
+#   * kroak-time polls it: copy this file, unchanged, into kroak-time's
+#     `{data_dir}/request-sources/` folder (Windows default:
+#     %APPDATA%\kroak-time\config\request-sources\) and restart kroak-time.
+#
+# Edit it here and copy it again whenever you change it, so both sides agree.
+# The ticker writes a fresh copy of this default if the file is deleted.
+
+schema_version = 1
+id = "kroak-time-ticker"
+name = "Singer page requests (kroak-time-ticker)"
+mode = "poll"
+enabled = true
+
+[config]
+# The ticker binds this host:port. Keep it on 127.0.0.1 — the protocol has no
+# authentication and getRequests lists every requester's device. (The public
+# singer page is served separately on [server].port.)
+base_url = "http://127.0.0.1:8767/"
+# Ticker-side only (kroak-time ignores unreferenced config keys): what to send
+# as the requester's first/last name. kroak-time shows them joined with a
+# space in its "requested by" column. Placeholders: {device_code} (4-char code,
+# stable per phone), {device_id}, {fingerprint}, {singer}.
+requested_by_first_name = "Phone"
+requested_by_last_name = "{device_code}"
+
+[poll]
+guard_interval_ms = 2000
+error_backoff_ms = 30000
+
+# Cheap change detection: kroak-time refetches only when this value changes.
+[operations.poll_guard]
+body = '{"command":"getSerial"}'
+[operations.poll_guard.extract]
+value = "serial"
+
+[operations.fetch]
+body = '{"command":"getRequests"}'
+[operations.fetch.extract]
+items = "requests"
+# Semantic field -> path within each item. request_id/singer/artist/title are
+# required by kroak-time; the rest are optional.
+[operations.fetch.extract.fields]
+request_id   = "request_id"
+singer       = "singer"
+artist       = "artist"
+title        = "title"
+key_change   = "key_change"
+request_time = "request_time"
+requested_by_first_name = "user_first_name"
+requested_by_last_name  = "user_last_name"
+
+# Context: {request_id}. Sent when the host adds or dismisses a request.
+[operations.delete]
+body = '{"command":"deleteRequest","request_id":{request_id}}'
+
+# Context: {accepting}. While false, the singer page refuses new requests.
+[operations.set_accepting]
+body = '{"command":"setAccepting","accepting":{accepting}}'

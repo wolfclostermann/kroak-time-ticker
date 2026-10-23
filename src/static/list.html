@@ -264,6 +264,116 @@
 
   footer a { color: inherit; text-decoration: none; }
   footer a:hover { color: var(--muted); }
+
+  .cta-request[hidden] { display: none; }
+  .cta-request[aria-expanded="true"] { animation: none; }
+
+  /* ── Song request form ([requests] enabled) ─────────────────────────────── */
+  .req-panel {
+    background: var(--surface);
+    border: 1px solid rgba(84, 176, 90, 0.45);
+    border-radius: 10px;
+    padding: 18px 20px 16px;
+    margin: -12px 0 24px;
+  }
+  .req-panel[hidden] { display: none; }
+
+  .req-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px 16px;
+  }
+  .req-field { position: relative; min-width: 0; }
+  .req-field.wide { grid-column: 1 / -1; }
+
+  .req-field label {
+    display: block;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+
+  .req-field input,
+  .req-field select {
+    width: 100%;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 11px 12px;
+    font: inherit;
+    font-size: 16px; /* ≥16px stops iOS zooming in on focus */
+  }
+  .req-field input:focus,
+  .req-field select:focus { outline: none; border-color: var(--accent); }
+
+  .ac-list {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 100%;
+    margin-top: 4px;
+    z-index: 10;
+    list-style: none;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    max-height: min(320px, 45vh);
+    overflow-y: auto;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+  }
+  .ac-list[hidden] { display: none; }
+  .ac-list li {
+    padding: 11px 12px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .ac-list li:last-child { border-bottom: none; }
+  .ac-list li[aria-selected="true"],
+  .ac-list li:hover { background: rgba(84, 176, 90, 0.14); }
+  .ac-list .ac-sub { color: var(--muted); margin-left: 6px; font-size: 13px; }
+  .ac-list .ac-note { color: var(--dim); font-style: italic; cursor: default; }
+  .ac-list .ac-note:hover { background: none; }
+
+  .req-hint { margin-top: 12px; font-size: 13px; color: var(--dim); }
+
+  .req-actions { display: flex; gap: 12px; margin-top: 14px; }
+  .req-submit {
+    flex: 1;
+    background: var(--accent);
+    color: #04170a;
+    border: none;
+    border-radius: 8px;
+    padding: 13px 18px;
+    font: inherit;
+    font-weight: 800;
+    font-size: 16px;
+    cursor: pointer;
+  }
+  .req-submit:disabled { opacity: 0.6; cursor: wait; }
+  .req-close {
+    background: none;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 13px 18px;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .req-msg { margin-top: 12px; font-size: 14px; min-height: 1em; }
+  .req-msg.ok  { color: var(--accent); font-weight: 600; }
+  .req-msg.err { color: #e6a23c; }
+
+  @media (max-width: 560px) {
+    body { padding: 16px; }
+    .req-grid { grid-template-columns: 1fr; }
+  }
 </style>
 </head>
 <body>
@@ -285,6 +395,39 @@
     <span class="live-dot"></span><span id="cta-tiktok-label">Watch live on TikTok</span>
   </a>
 </div>
+
+<!-- Song request form. Stays collapsed (and the catalog unloaded) until the
+     request button opens it; only used when [requests] is enabled. -->
+<section class="req-panel" id="req-panel" hidden>
+  <form id="req-form" autocomplete="off" novalidate>
+    <div class="req-grid">
+      <div class="req-field wide">
+        <label for="req-name">Your name</label>
+        <input id="req-name" name="singer" maxlength="120" autocomplete="nickname" autocapitalize="words" enterkeyhint="next">
+      </div>
+      <div class="req-field">
+        <label for="req-artist">Artist</label>
+        <input id="req-artist" name="artist" maxlength="120" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="req-artist-list" spellcheck="false" enterkeyhint="next">
+        <ul class="ac-list" id="req-artist-list" role="listbox" hidden></ul>
+      </div>
+      <div class="req-field">
+        <label for="req-title">Title</label>
+        <input id="req-title" name="title" maxlength="120" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="req-title-list" spellcheck="false" enterkeyhint="done">
+        <ul class="ac-list" id="req-title-list" role="listbox" hidden></ul>
+      </div>
+      <div class="req-field wide">
+        <label for="req-key">Key</label>
+        <select id="req-key" name="key_change"></select>
+      </div>
+    </div>
+    <p class="req-hint" id="req-hint">Start typing to search the song list — or just type any song that isn't in it.</p>
+    <div class="req-actions">
+      <button type="submit" class="req-submit" id="req-submit">Send request</button>
+      <button type="button" class="req-close" id="req-close">Close</button>
+    </div>
+    <p class="req-msg" id="req-msg" role="status" aria-live="polite"></p>
+  </form>
+</section>
 
 <div class="hero">
   <div class="hero-card now" id="card-now">
@@ -317,17 +460,27 @@
 </footer>
 
 <script>
-  const TICKER_CFG = __TICKER_CFG__;
+  const TICKER_CFG   = __TICKER_CFG__;
+  const REQUESTS_CFG = __REQUESTS_CFG__;
 
   // "Request your song" button: TICKER_CFG.show_request_button sets the
-  // default (true unless configured off); ?request=0/1 (also accepts
-  // false/off/no and true/on/yes) overrides it per-view either way.
+  // default (true unless configured off) — or always shown when the in-page
+  // request form is enabled; ?request=0/1 (also accepts false/off/no and
+  // true/on/yes) overrides it per-view either way.
   (function () {
     const el = document.getElementById('cta-request');
     document.getElementById('cta-request-label').textContent = TICKER_CFG.request_button_text || 'Request your song';
-    if (TICKER_CFG.request_button_url) el.href = TICKER_CFG.request_button_url;
+    if (REQUESTS_CFG.enabled) {
+      el.href = '#request';
+      el.removeAttribute('target');
+      el.setAttribute('role', 'button');
+      el.setAttribute('aria-controls', 'req-panel');
+      el.setAttribute('aria-expanded', 'false');
+    } else if (TICKER_CFG.request_button_url) {
+      el.href = TICKER_CFG.request_button_url;
+    }
 
-    let show = TICKER_CFG.show_request_button !== false;
+    let show = REQUESTS_CFG.enabled || TICKER_CFG.show_request_button !== false;
     const val = new URLSearchParams(location.search).get('request');
     if (val !== null) {
       const v = val.toLowerCase();
@@ -562,6 +715,385 @@
 
   update();
   setInterval(update, 1500);
+</script>
+
+<script>
+  // ── Song requests ([requests] enabled) ──────────────────────────────────────
+  // Nothing here runs at page load except wiring up the button: the catalog
+  // is fetched only after the page has finished loading (and the browser is
+  // idle), or straight away if the form is opened first. Fingerprinting is
+  // only done when a request is actually sent.
+  (function () {
+    if (!REQUESTS_CFG.enabled) return;
+
+    const $ = id => document.getElementById(id);
+    const btn = $('cta-request'), panel = $('req-panel'), form = $('req-form');
+    const nameEl = $('req-name'), artistEl = $('req-artist'), titleEl = $('req-title'), keyEl = $('req-key');
+    const msgEl = $('req-msg'), hintEl = $('req-hint'), submitEl = $('req-submit');
+
+    // ── Persistence: localStorage, with a cookie fallback (some in-app
+    // browsers block or wipe localStorage) ────────────────────────────────────
+    const DEVICE_KEY = 'kt_device_id', NAME_KEY = 'kt_singer_name';
+    function readCookie(k) {
+      const m = document.cookie.match(new RegExp('(?:^|; )' + k + '=([^;]*)'));
+      return m ? decodeURIComponent(m[1]) : null;
+    }
+    function load(k) {
+      try { const v = localStorage.getItem(k); if (v) return v; } catch (_) {}
+      return readCookie(k);
+    }
+    function save(k, v) {
+      try { localStorage.setItem(k, v); } catch (_) {}
+      document.cookie = `${k}=${encodeURIComponent(v)}; max-age=${60 * 60 * 24 * 400}; path=/; SameSite=Lax`;
+    }
+
+    // Canonical per-device id: random, generated once, then kept in
+    // localStorage + cookie. It's what links requests made under different
+    // names from the same phone. (The fingerprint below is sent alongside,
+    // not used as the id: identical phone models on the same OS version often
+    // fingerprint identically, which would merge different people.)
+    function deviceId() {
+      let id = load(DEVICE_KEY);
+      if (!id || !/^[A-Za-z0-9-]{8,64}$/.test(id)) {
+        const bytes = new Uint8Array(16);
+        if (window.crypto && crypto.getRandomValues) crypto.getRandomValues(bytes);
+        else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.random() * 256 | 0;
+        id = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+      }
+      save(DEVICE_KEY, id); // refresh both stores every time
+      return id;
+    }
+
+    // cyrb53: small, fast 53-bit string hash (no crypto.subtle, which needs
+    // a secure context — the LAN URL is plain http).
+    function cyrb53(str, seed = 0) {
+      let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed;
+      for (let i = 0; i < str.length; i++) {
+        const ch = str.charCodeAt(i);
+        h1 = Math.imul(h1 ^ ch, 2654435761);
+        h2 = Math.imul(h2 ^ ch, 1597334677);
+      }
+      h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+      h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+      return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16).padStart(14, '0');
+    }
+
+    let fingerprintCache = null;
+    function fingerprint() {
+      if (fingerprintCache) return fingerprintCache;
+      const parts = [];
+      const add = f => { try { parts.push(String(f())); } catch (_) { parts.push('?'); } };
+      const n = navigator, s = screen;
+      add(() => n.userAgent);
+      add(() => (n.languages || [n.language]).join(','));
+      add(() => n.platform);
+      add(() => n.hardwareConcurrency);
+      add(() => n.deviceMemory);
+      add(() => n.maxTouchPoints);
+      add(() => [s.width, s.height, s.colorDepth, window.devicePixelRatio].join('x'));
+      add(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
+      add(() => {
+        const c = document.createElement('canvas');
+        c.width = 240; c.height = 60;
+        const g = c.getContext('2d');
+        g.textBaseline = 'top';
+        g.font = '16px Arial';
+        g.fillStyle = '#f60'; g.fillRect(100, 1, 62, 20);
+        g.fillStyle = '#069'; g.fillText('kroak-time 🎤 Ω', 2, 15);
+        g.fillStyle = 'rgba(102,204,0,0.7)'; g.fillText('kroak-time 🎤 Ω', 4, 17);
+        return cyrb53(c.toDataURL());
+      });
+      add(() => {
+        const gl = document.createElement('canvas').getContext('webgl');
+        const ext = gl && gl.getExtension('WEBGL_debug_renderer_info');
+        return ext ? gl.getParameter(ext.UNMASKED_VENDOR_WEBGL) + '/' + gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : '';
+      });
+      return (fingerprintCache = cyrb53(parts.join('|')));
+    }
+
+    // ── Catalog ──────────────────────────────────────────────────────────────
+    // Normalised for matching: no accents, no apostrophes ("dont" finds
+    // "Don't"), "&" reads as "and", other punctuation becomes spaces.
+    function norm(s) {
+      return String(s).normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .toLowerCase().replace(/['’`]/g, '').replace(/&/g, ' and ')
+        .replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+    }
+
+    let cat = null;          // built index, once loaded
+    let catPromise = null;
+
+    function buildIndex(data) {
+      const artists = data.artists || [], rows = data.songs || [];
+      const idx = {
+        artists,
+        artistNorm: artists.map(a => ' ' + norm(a)),
+        artistSongs: artists.map(() => []),
+        title: new Array(rows.length),
+        titleNorm: new Array(rows.length),
+        songArtist: new Array(rows.length),
+      };
+      rows.forEach(([a, t], i) => {
+        idx.title[i] = t;
+        idx.titleNorm[i] = ' ' + norm(t);
+        idx.songArtist[i] = a;
+        idx.artistSongs[a].push(i);
+      });
+      return idx;
+    }
+
+    function loadCatalog() {
+      if (!catPromise) {
+        catPromise = fetch('/api/catalog', { priority: 'low' })
+          .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+          .then(data => {
+            cat = buildIndex(data);
+            hintEl.textContent = cat.title.length
+              ? 'Start typing to search the song list — or just type any song that isn\'t in it.'
+              : 'Type the artist and song you\'d like to sing.';
+            // Refresh whichever box the singer is already typing in.
+            if (document.activeElement === artistEl) suggestArtists();
+            if (document.activeElement === titleEl) suggestTitles();
+          })
+          .catch(err => {
+            catPromise = null; // retry on next open
+            hintEl.textContent = 'Couldn\'t load the song list — you can still type your song in.';
+            throw err;
+          });
+      }
+      return catPromise;
+    }
+
+    // Prefetch in the background once the page is fully up, so the list is
+    // usually ready by the time someone opens the form.
+    window.addEventListener('load', () => {
+      const idle = window.requestIdleCallback || (cb => setTimeout(cb, 200));
+      setTimeout(() => idle(() => loadCatalog().catch(() => {})), 1500);
+    });
+
+    // A haystack (leading-space-normalised) matches when every query term
+    // starts a word in it. Ranked: starts with the whole query, then contains
+    // it as a phrase, then the rest; shorter names first within a rank.
+    function matcher(query) {
+      const q = norm(query);
+      if (!q) return null;
+      const terms = q.split(' ').map(t => ' ' + t), phrase = ' ' + q;
+      return hay => {
+        for (const t of terms) if (!hay.includes(t)) return -1;
+        return hay.startsWith(phrase) ? 0 : hay.includes(phrase) ? 1 : 2;
+      };
+    }
+
+    function rankTop(candidates, hayOf, labelOf, query, limit) {
+      const m = matcher(query);
+      const hits = [];
+      for (const i of candidates) {
+        const r = m(hayOf(i));
+        if (r >= 0) hits.push([r, labelOf(i).length, i]);
+      }
+      hits.sort((a, b) => a[0] - b[0] || a[1] - b[1] || (labelOf(a[2]) < labelOf(b[2]) ? -1 : 1));
+      return hits.slice(0, limit).map(h => h[2]);
+    }
+
+    const range = n => { const a = new Array(n); for (let i = 0; i < n; i++) a[i] = i; return a; };
+
+    // ── Form state ───────────────────────────────────────────────────────────
+    let selArtist = null;   // artist index chosen from the list (or typed exactly)
+    let selSong = null;     // song index chosen from the list
+
+    function exactArtist(text) {
+      if (!cat) return null;
+      const n = ' ' + norm(text);
+      const i = cat.artistNorm.indexOf(n);
+      return i >= 0 ? i : null;
+    }
+
+    // ── Dropdown widget ──────────────────────────────────────────────────────
+    function makeDropdown(input, list, onPick) {
+      let items = [], active = -1;
+      function render(entries, note) {
+        items = entries;
+        active = -1;
+        list.textContent = '';
+        entries.forEach((e, i) => {
+          const li = document.createElement('li');
+          li.setAttribute('role', 'option');
+          li.id = `${list.id}-${i}`;
+          li.textContent = e.label;
+          if (e.sub) {
+            const sub = document.createElement('span');
+            sub.className = 'ac-sub';
+            sub.textContent = e.sub;
+            li.appendChild(sub);
+          }
+          // Pick on click (so a touch that scrolls the list doesn't pick);
+          // cancelling mousedown keeps focus in the input meanwhile.
+          li.addEventListener('mousedown', ev => ev.preventDefault());
+          li.addEventListener('click', () => onPick(e));
+          list.appendChild(li);
+        });
+        if (note) {
+          const li = document.createElement('li');
+          li.className = 'ac-note';
+          li.textContent = note;
+          li.addEventListener('mousedown', ev => ev.preventDefault());
+          list.appendChild(li);
+        }
+        const open = entries.length > 0 || !!note;
+        list.hidden = !open;
+        input.setAttribute('aria-expanded', String(open));
+        input.removeAttribute('aria-activedescendant');
+      }
+      function move(d) {
+        if (!items.length) return;
+        active = (active + d + items.length) % items.length;
+        [...list.children].forEach((li, i) => li.setAttribute('aria-selected', String(i === active)));
+        const li = list.children[active];
+        input.setAttribute('aria-activedescendant', li.id);
+        li.scrollIntoView({ block: 'nearest' });
+      }
+      input.addEventListener('keydown', e => {
+        if (list.hidden) return;
+        if (e.key === 'ArrowDown') { e.preventDefault(); move(1); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); move(-1); }
+        else if (e.key === 'Enter' && active >= 0) { e.preventDefault(); onPick(items[active]); }
+        else if (e.key === 'Escape') { render([]); }
+      });
+      input.addEventListener('blur', () => setTimeout(() => render([]), 120));
+      return { render, close: () => render([]) };
+    }
+
+    const artistDD = makeDropdown(artistEl, $('req-artist-list'), e => {
+      artistEl.value = cat.artists[e.i];
+      selArtist = e.i;
+      selSong = null;
+      titleEl.value = '';
+      artistDD.close();
+      titleEl.focus();
+      suggestTitles();
+    });
+
+    const titleDD = makeDropdown(titleEl, $('req-title-list'), e => {
+      titleEl.value = cat.title[e.i];
+      artistEl.value = cat.artists[cat.songArtist[e.i]];
+      selArtist = cat.songArtist[e.i];
+      selSong = e.i;
+      titleDD.close();
+      titleEl.blur(); // drop the phone keyboard — the form's filled in
+    });
+
+    function suggestArtists() {
+      if (!cat) { if (artistEl.value.trim()) artistDD.render([], 'Loading song list…'); return; }
+      if (!artistEl.value.trim()) return artistDD.close();
+      const top = rankTop(range(cat.artists.length), i => cat.artistNorm[i], i => cat.artists[i], artistEl.value, 8);
+      artistDD.render(top.map(i => ({ i, label: cat.artists[i], sub: `${cat.artistSongs[i].length} song${cat.artistSongs[i].length === 1 ? '' : 's'}` })));
+    }
+
+    function suggestTitles() {
+      if (!cat) { if (titleEl.value.trim()) titleDD.render([], 'Loading song list…'); return; }
+      const q = titleEl.value.trim();
+      const artistText = artistEl.value.trim();
+
+      // Scope: the chosen artist; else every artist matching what's typed in
+      // the artist box (if anything matches); else the whole catalog.
+      let scope = null, oneArtist = false;
+      if (selArtist !== null) { scope = cat.artistSongs[selArtist]; oneArtist = true; }
+      else if (artistText) {
+        const m = matcher(artistText);
+        const songs = [];
+        cat.artistNorm.forEach((hay, i) => { if (m(hay) >= 0) songs.push(...cat.artistSongs[i]); });
+        if (songs.length) scope = songs;
+      }
+
+      if (!q) {
+        // Empty title box: list everything by the chosen artist.
+        if (!oneArtist) return titleDD.close();
+        return titleDD.render(scope.slice(0, 200).map(i => ({ i, label: cat.title[i] })));
+      }
+      const top = rankTop(scope || range(cat.title.length), i => cat.titleNorm[i], i => cat.title[i], q, oneArtist ? 50 : 12);
+      titleDD.render(top.map(i => ({ i, label: cat.title[i], sub: oneArtist ? '' : cat.artists[cat.songArtist[i]] })));
+    }
+
+    artistEl.addEventListener('input', () => {
+      selArtist = exactArtist(artistEl.value);
+      selSong = null;
+      suggestArtists();
+    });
+    artistEl.addEventListener('focus', suggestArtists);
+    titleEl.addEventListener('input', () => { selSong = null; suggestTitles(); });
+    titleEl.addEventListener('focus', suggestTitles);
+
+    // Key: -6..+6 semitones.
+    for (let k = -6; k <= 6; k++) {
+      const o = document.createElement('option');
+      o.value = k;
+      o.textContent = k === 0 ? 'Original key' : `${k > 0 ? '+' : '−'}${Math.abs(k)} semitone${Math.abs(k) === 1 ? '' : 's'} (${k > 0 ? 'higher' : 'lower'})`;
+      if (k === 0) o.selected = true;
+      keyEl.appendChild(o);
+    }
+
+    // ── Open / close ─────────────────────────────────────────────────────────
+    function setOpen(open) {
+      panel.hidden = !open;
+      btn.setAttribute('aria-expanded', String(open));
+      if (!open) return;
+      loadCatalog().catch(() => {});
+      if (!nameEl.value) nameEl.value = load(NAME_KEY) || '';
+      msgEl.textContent = '';
+      msgEl.className = 'req-msg';
+      (nameEl.value ? artistEl : nameEl).focus({ preventScroll: true });
+      panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+    btn.addEventListener('click', e => { e.preventDefault(); setOpen(panel.hidden); });
+    $('req-close').addEventListener('click', () => setOpen(false));
+    if (location.hash === '#request') setOpen(true);
+
+    nameEl.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); artistEl.focus(); } });
+    artistEl.addEventListener('keydown', e => { if (e.key === 'Enter' && $('req-artist-list').hidden) { e.preventDefault(); titleEl.focus(); } });
+
+    // ── Submit ───────────────────────────────────────────────────────────────
+    function showMsg(text, kind) {
+      msgEl.textContent = text;
+      msgEl.className = 'req-msg ' + kind;
+    }
+
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      const singer = nameEl.value.trim(), artist = artistEl.value.trim(), title = titleEl.value.trim();
+      if (!singer) { showMsg('Please put your name in.', 'err'); return nameEl.focus(); }
+      if (!title) { showMsg('Which song? Fill in the title.', 'err'); return titleEl.focus(); }
+
+      const inCatalog = !!(cat && selSong !== null
+        && cat.title[selSong] === title && cat.artists[cat.songArtist[selSong]] === artist);
+
+      submitEl.disabled = true;
+      try {
+        const r = await fetch('/api/request', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            singer, artist, title,
+            key_change: Number(keyEl.value) || 0,
+            device_id: deviceId(),
+            fingerprint: fingerprint(),
+            in_catalog: inCatalog,
+          }),
+        });
+        const res = await r.json().catch(() => ({}));
+        if (!r.ok || !res.ok) throw new Error(res.error || 'Something went wrong — please try again.');
+
+        save(NAME_KEY, singer);
+        showMsg(`Sent! “${title}” for ${singer}. Want to request another?`, 'ok');
+        artistEl.value = titleEl.value = '';
+        keyEl.value = '0';
+        selArtist = selSong = null;
+      } catch (err) {
+        showMsg(err.message || 'Couldn\'t send — check your connection and try again.', 'err');
+      } finally {
+        submitEl.disabled = false;
+      }
+    });
+  })();
 </script>
 </body>
 </html>

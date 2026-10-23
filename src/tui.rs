@@ -30,13 +30,15 @@ enum Section {
     SingTime,
     Scroll,
     Ngrok,
+    Requests,
 }
 
-const SECTIONS: [Section; 6] = [
+const SECTIONS: [Section; 7] = [
     Section::Ticker,
     Section::QueueInfo,
     Section::SingTime,
     Section::Scroll,
+    Section::Requests,
     Section::Server,
     Section::Ngrok,
 ];
@@ -50,6 +52,7 @@ impl Section {
             Section::SingTime => "Sing Time",
             Section::Scroll => "Scroll",
             Section::Ngrok => "Ngrok",
+            Section::Requests => "Requests",
         }
     }
 }
@@ -131,6 +134,12 @@ fn fields(section: Section) -> &'static [FieldMeta] {
             FieldMeta { label: "authtoken", help: "ngrok authtoken. Leave blank to fall back to the NGROK_AUTHTOKEN environment variable.", kind: FieldKind::Text, restart: true },
             FieldMeta { label: "domain", help: "Reserved ngrok domain (e.g. \"my-ticker.ngrok-free.app\"). Leave blank for a random URL each run.", kind: FieldKind::Text, restart: true },
         ],
+        Section::Requests => &[
+            FieldMeta { label: "enabled", help: "Turn the request button into an in-page song request form that sends requests to kroak-time.", kind: FieldKind::Bool, restart: true },
+            FieldMeta { label: "catalog_path", help: "Song catalog: .csv/.tsv/.txt with artist + title columns, .json, or kroak-time's catalog.redb. Blank = kroak-time's default catalog.redb.", kind: FieldKind::Text, restart: false },
+            FieldMeta { label: "contract_path", help: "kroak-time request-source definition describing the API served to kroak-time. Copy the same file into kroak-time's request-sources folder.", kind: FieldKind::Text, restart: true },
+            FieldMeta { label: "max_pending_per_device", help: "Most waiting requests one phone can have at once. 0 = unlimited.", kind: FieldKind::Num, restart: false },
+        ],
     }
 }
 
@@ -192,6 +201,10 @@ fn value_str(cfg: &Config, section: Section, idx: usize) -> String {
         (Ngrok, 0) => cfg.ngrok.enabled.to_string(),
         (Ngrok, 1) => cfg.ngrok.authtoken.clone(),
         (Ngrok, 2) => cfg.ngrok.domain.clone(),
+        (Requests, 0) => cfg.requests.enabled.to_string(),
+        (Requests, 1) => cfg.requests.catalog_path.clone(),
+        (Requests, 2) => cfg.requests.contract_path.clone(),
+        (Requests, 3) => cfg.requests.max_pending_per_device.to_string(),
         _ => String::new(),
     }
 }
@@ -255,6 +268,9 @@ fn set_text(cfg: &mut Config, section: Section, idx: usize, text: &str) -> std::
         (Scroll, 15) => cfg.scroll.label_info = text.to_string(),
         (Ngrok, 1) => cfg.ngrok.authtoken = text.to_string(),
         (Ngrok, 2) => cfg.ngrok.domain = text.to_string(),
+        (Requests, 1) => cfg.requests.catalog_path = text.to_string(),
+        (Requests, 2) => cfg.requests.contract_path = text.to_string(),
+        (Requests, 3) => cfg.requests.max_pending_per_device = parse_num(text)?,
         _ => return Err("not a text field".to_string()),
     }
     Ok(())
@@ -277,6 +293,7 @@ fn toggle_bool(cfg: &mut Config, section: Section, idx: usize) {
         (SingTime, 1) => cfg.ticker.sing_time.show_per_singer = !cfg.ticker.sing_time.show_per_singer,
         (SingTime, 2) => cfg.ticker.sing_time.show_in_banner = !cfg.ticker.sing_time.show_in_banner,
         (Ngrok, 0) => cfg.ngrok.enabled = !cfg.ngrok.enabled,
+        (Requests, 0) => cfg.requests.enabled = !cfg.requests.enabled,
         _ => {}
     }
 }
@@ -631,7 +648,7 @@ fn draw(f: &mut Frame, app: &App) {
     let area = f.area();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(5), Constraint::Length(6), Constraint::Length(2)])
+        .constraints([Constraint::Length(3), Constraint::Min(5), Constraint::Length(7), Constraint::Length(2)])
         .split(area);
 
     draw_tabs(f, chunks[0], app);
@@ -693,6 +710,18 @@ fn draw_status(f: &mut Frame, area: Rect, app: &App) {
             lines.push(ngrok_line);
 
             lines.push(Line::from(vec![label("Upstream"), Span::raw(info.upstream_url.clone())]));
+
+            lines.push(match &info.request_server {
+                Some(Ok(addr)) => Line::from(vec![
+                    Span::styled(format!("{:<11}", "Requests"), Style::default().fg(Color::Green)),
+                    Span::styled(addr.clone(), Style::default().fg(Color::Green)),
+                ]),
+                Some(Err(err)) => Line::from(Span::styled(
+                    format!("⚠ Song requests enabled but the request contract failed: {err}"),
+                    Style::default().fg(Color::Red),
+                )),
+                None => Line::from(Span::styled(format!("{:<11}disabled", "Requests"), Style::default().fg(Color::DarkGray))),
+            });
 
             lines
         }
