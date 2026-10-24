@@ -77,7 +77,7 @@ WAITING_SONGS = [
     ("Sam Cooke",    None,            None),
 ]
 
-AVG_SONG_SECS = 210  # used only to synthesize a plausible queue_duration_secs
+AVG_SONG_SECS = 210  # synthesizes queue_duration_secs and each song's length
 GAP_TIME_SECS = 45
 
 # Mirrors kroak-time's real api_ticker_singer_count setting/default: 0 means
@@ -92,6 +92,8 @@ SING_TIME_ENABLED = True
 lock = threading.Lock()
 current_index = 0
 is_playing = True
+# When the current song "started", for a synthesized song_position_ms.
+song_started = time.time()
 
 
 def singer_obj(entry, is_current, sings_in_secs=None):
@@ -103,6 +105,7 @@ def singer_obj(entry, is_current, sings_in_secs=None):
         "name": name,
         "next_song_artist": artist,
         "next_song_title": title,
+        "next_song_duration_ms": AVG_SONG_SECS * 1000 if title else None,
         "is_current": is_current,
         "sings_in_secs": sings_in_secs,
         "sings_at": sings_at,
@@ -113,6 +116,7 @@ def build_state():
     with lock:
         idx = current_index
         playing = is_playing
+        started = song_started
 
     n = len(ROTATION_SONGS)
 
@@ -150,22 +154,29 @@ def build_state():
         "is_playing": playing,
         "status": "ok",
         "queue_duration_secs": queue_duration_secs,
+        # Every mock song is AVG_SONG_SECS long and sticks at its end until
+        # /advance, like a real song that has finished but not been moved on.
+        "song_position_ms": int(min(time.time() - started, AVG_SONG_SECS) * 1000) if playing else None,
+        "song_duration_ms": AVG_SONG_SECS * 1000 if playing else None,
+        "playback_rate": 1.0 if playing else None,
     }
 
 
 def advance():
-    global current_index, is_playing
+    global current_index, is_playing, song_started
     with lock:
         current_index = (current_index + 1) % len(ROTATION_SONGS)
         is_playing = True
+        song_started = time.time()
         return current_index
 
 
 def reset():
-    global current_index, is_playing
+    global current_index, is_playing, song_started
     with lock:
         current_index = 0
         is_playing = True
+        song_started = time.time()
 
 
 class Handler(BaseHTTPRequestHandler):

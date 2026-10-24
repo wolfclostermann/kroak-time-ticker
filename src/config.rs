@@ -123,6 +123,12 @@ pub struct TickerConfig {
     #[serde(default = "default_badge_next_text")]
     pub badge_next_text: String,
 
+    /// Show elapsed / remaining time and a progress bar for the song on
+    /// stage, under the current singer on the dashboard (/). Needs a
+    /// kroak-time that sends `song_position_ms`; hidden otherwise.
+    #[serde(default = "default_true")]
+    pub show_song_progress: bool,
+
     /// Singer-count / queue-time banner: when and how to show it.
     #[serde(default)]
     pub queue_info: QueueInfoConfig,
@@ -153,6 +159,7 @@ impl Default for TickerConfig {
             hero_next_label: default_hero_next_label(),
             badge_now_text: default_badge_now_text(),
             badge_next_text: default_badge_next_text(),
+            show_song_progress: true,
             queue_info: QueueInfoConfig::default(),
             sing_time: SingTimeConfig::default(),
         }
@@ -553,6 +560,8 @@ const CONFIG_HEADER: &str = r##"# kroak-time-ticker configuration
 # hero_next_label = "Next Up"      # Label above the next singer's name on the dashboard.
 # badge_now_text = "NOW"           # Badge text marking the current singer's row in the table.
 # badge_next_text = "NEXT"         # Badge text marking the next singer's row in the table.
+# show_song_progress = true        # Elapsed / remaining time + progress bar for the song on
+#                                   # stage, under the current singer on the dashboard.
 #
 # [ticker.queue_info]        # Singer-count / queue-time banner: when and how to show it.
 # show_at_start = true       # Show the banner once as soon as the ticker loads.

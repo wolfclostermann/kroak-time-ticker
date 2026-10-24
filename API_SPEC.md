@@ -35,7 +35,10 @@ No authentication. No query parameters. Always returns JSON.
   "singer_count":   <integer>,
   "is_playing":     <boolean>,
   "status":         <string>,
-  "queue_duration_secs": <integer>
+  "queue_duration_secs": <integer>,
+  "song_position_ms": <integer | null>,
+  "song_duration_ms": <integer | null>,
+  "playback_rate":    <number | null>
 }
 ```
 
@@ -50,6 +53,9 @@ No authentication. No query parameters. Always returns JSON.
 | `is_playing` | boolean | `true` when a song is actively being performed by `current_singer`. `false` between songs or when the rotation is idle. |
 | `status` | string | Health string (see Status values below). |
 | `queue_duration_secs` | integer | Raw estimated seconds for the full rotation to complete (sum of each singer's next queued song duration plus the gap between singers). This is deliberately unformatted — the ticker owns all display decisions (whether/when to show it, precise vs. rounded phrasing, legend text). See the `[ticker.queue_info]` section of `kroak-time-ticker.toml`. |
+| `song_position_ms` | integer \| null | Optional. How far into the song on stage playback is, in milliseconds of *song time*. `null` (or absent, from an older kroak-time) while idle, and for the first moment of a song before the player reports a position. Up to about 1 s old; the dashboard counts forward locally between polls at `playback_rate`. Shown under the current singer when `[ticker].show_song_progress` is on. |
+| `song_duration_ms` | integer \| null | Optional. Length of the song on stage, in milliseconds of song time. Present or `null` together with `song_position_ms`. |
+| `playback_rate` | number \| null | Optional. Tempo of the song on stage: `1.0` = normal, `0.9` = 90 %, range `0.5`–`1.5`; can change mid-song. `null` while idle; absent from an older kroak-time, which the dashboard reads as `1.0`. Song time runs this many times faster than real time, so the dashboard's remaining time is `(song_duration_ms - song_position_ms) / playback_rate`. A rate with a `null` position means the song has just started: the dashboard shows 0:00 against `current_singer.next_song_duration_ms`. |
 
 ---
 
@@ -60,6 +66,7 @@ No authentication. No query parameters. Always returns JSON.
   "name":             <string>,
   "next_song_artist": <string | null>,
   "next_song_title":  <string | null>,
+  "next_song_duration_ms": <integer | null>,
   "is_current":       <boolean>,
   "sings_in_secs":    <integer | null>,
   "sings_at":         <integer | null>
@@ -71,6 +78,7 @@ No authentication. No query parameters. Always returns JSON.
 | `name` | string | Display name of the singer. |
 | `next_song_artist` | string \| null | Artist of the singer's next queued song, or `null` if their queue is empty. |
 | `next_song_title` | string \| null | Title of the singer's next queued song, or `null` if their queue is empty. |
+| `next_song_duration_ms` | integer \| null | Optional. Catalog length of that song in milliseconds, at normal speed. `null` with an empty queue, when the catalog doesn't know the length, or from an older kroak-time. |
 | `is_current` | boolean | `true` only for the singer who matches `current_singer`. Set to `false` for all others, including `next_up`. |
 | `sings_in_secs` | integer \| null | Estimated seconds from now until this singer next starts singing. `0` for the singer performing now (or, between songs, the singer at the top of the rotation). `null` when kroak-time has rotation timing switched off, when the singer was skipped as empty, or from an older kroak-time that doesn't send the field. |
 | `sings_at` | integer \| null | The same estimate as a Unix timestamp (UTC epoch seconds): snapshot time + `sings_in_secs`. `null` whenever `sings_in_secs` is `null`. |
