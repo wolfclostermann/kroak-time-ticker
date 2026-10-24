@@ -124,7 +124,8 @@ pub struct TickerConfig {
     pub badge_next_text: String,
 
     /// Show elapsed / remaining time and a progress bar for the song on
-    /// stage, under the current singer on the dashboard (/). Needs a
+    /// stage, under the current singer on the dashboard (/), and a progress
+    /// bar along the bottom of the /scroll banner. Needs a
     /// kroak-time that sends `song_position_ms`; hidden otherwise.
     #[serde(default = "default_true")]
     pub show_song_progress: bool,
@@ -317,6 +318,15 @@ pub struct ScrollConfig {
     /// Text of the "QUEUE" label on the singer-count / queue-time banner.
     #[serde(default = "default_label_info")]
     pub label_info: String,
+
+    /// Color of the song progress bar along the bottom of the banner
+    /// (shown when `[ticker].show_song_progress` is on).
+    #[serde(default = "default_color_progress")]
+    pub color_progress: String,
+
+    /// Height of the song progress bar in pixels. 0 hides it.
+    #[serde(default = "default_progress_height")]
+    pub progress_height: u32,
 }
 
 impl Default for ScrollConfig {
@@ -338,6 +348,8 @@ impl Default for ScrollConfig {
             label_next:   default_label_next(),
             label_up:     default_label_up(),
             label_info:   default_label_info(),
+            color_progress:  default_color_progress(),
+            progress_height: default_progress_height(),
         }
     }
 }
@@ -358,6 +370,8 @@ fn default_label_next()    -> String { "NEXT".into() }
 fn default_label_up()      -> String { "THEN".into() }
 fn default_label_info()    -> String { "QUEUE".into() }
 fn default_color_info()    -> String { "#7cfc8a".into() }
+fn default_color_progress() -> String { "#ff8c1a".into() }
+fn default_progress_height() -> u32  { 6 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct NgrokConfig {
@@ -605,6 +619,8 @@ const CONFIG_HEADER: &str = r##"# kroak-time-ticker configuration
 # label_next = "NEXT"        # Text of the "NEXT" label before the next singer.
 # label_up = "THEN"          # Text of the "THEN" label before each upcoming-singers group.
 # label_info = "QUEUE"       # Text of the "QUEUE" label on the singer-count / queue-time banner.
+# color_progress = "#ff8c1a" # Song progress bar along the bottom (needs show_song_progress).
+# progress_height = 6        # Song progress bar height in pixels. 0 hides it.
 #
 # [requests]                 # In-page song requests on the dashboard (/), sent to kroak-time.
 # enabled = false            # When true, the request button (show_request_button /
