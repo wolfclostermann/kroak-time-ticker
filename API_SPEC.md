@@ -35,7 +35,9 @@ No authentication. No query parameters. Always returns JSON.
   "singer_count":   <integer>,
   "is_playing":     <boolean>,
   "status":         <string>,
-  "queue_duration_secs": <integer>
+  "queue_duration_secs": <integer>,
+  "song_position_ms": <integer | null>,
+  "song_duration_ms": <integer | null>
 }
 ```
 
@@ -50,6 +52,8 @@ No authentication. No query parameters. Always returns JSON.
 | `is_playing` | boolean | `true` when a song is actively being performed by `current_singer`. `false` between songs or when the rotation is idle. |
 | `status` | string | Health string (see Status values below). |
 | `queue_duration_secs` | integer | Raw estimated seconds for the full rotation to complete (sum of each singer's next queued song duration plus the gap between singers). This is deliberately unformatted — the ticker owns all display decisions (whether/when to show it, precise vs. rounded phrasing, legend text). See the `[ticker.queue_info]` section of `kroak-time-ticker.toml`. |
+| `song_position_ms` | integer \| null | Optional. How far into the song on stage playback is, in milliseconds. `null` (or absent, from an older kroak-time) while idle. Sampled about every 500 ms; the dashboard counts forward locally between polls. Shown under the current singer when `[ticker].show_song_progress` is on. |
+| `song_duration_ms` | integer \| null | Optional. Length of the song on stage, in milliseconds. `null` while idle or before the player knows the length; the dashboard then shows elapsed time only. |
 
 ---
 

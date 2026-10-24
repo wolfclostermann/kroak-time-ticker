@@ -32,6 +32,13 @@ pub struct KaraokeState {
     /// older kroak-time that doesn't send the field yet.
     #[serde(default)]
     pub queue_duration_secs: i64,
+    /// Playback position of the song on stage, in ms; `null` while idle or
+    /// from an older kroak-time that doesn't send it.
+    #[serde(default)]
+    pub song_position_ms: Option<u64>,
+    /// Length of the song on stage, in ms; `null` while idle or unknown.
+    #[serde(default)]
+    pub song_duration_ms: Option<u64>,
 }
 
 pub async fn fetch_state(upstream_url: &str) -> Result<KaraokeState> {

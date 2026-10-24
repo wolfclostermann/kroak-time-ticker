@@ -97,6 +97,7 @@ fn fields(section: Section) -> &'static [FieldMeta] {
             FieldMeta { label: "hero_next_label", help: "Label above the next singer's name on the dashboard (/).", kind: FieldKind::Text, restart: false },
             FieldMeta { label: "badge_now_text", help: "Badge text marking the current singer's row in the dashboard table.", kind: FieldKind::Text, restart: false },
             FieldMeta { label: "badge_next_text", help: "Badge text marking the next singer's row in the dashboard table.", kind: FieldKind::Text, restart: false },
+            FieldMeta { label: "show_song_progress", help: "Show elapsed / remaining time and a progress bar for the song on stage, under the current singer on the dashboard (/).", kind: FieldKind::Bool, restart: false },
         ],
         Section::QueueInfo => &[
             FieldMeta { label: "show_at_start", help: "Show the singer-count/queue-time banner as soon as the ticker loads.", kind: FieldKind::Bool, restart: false },
@@ -173,6 +174,7 @@ fn value_str(cfg: &Config, section: Section, idx: usize) -> String {
         (Ticker, 14) => cfg.ticker.hero_next_label.clone(),
         (Ticker, 15) => cfg.ticker.badge_now_text.clone(),
         (Ticker, 16) => cfg.ticker.badge_next_text.clone(),
+        (Ticker, 17) => cfg.ticker.show_song_progress.to_string(),
         (QueueInfo, 0) => cfg.ticker.queue_info.show_at_start.to_string(),
         (QueueInfo, 1) => cfg.ticker.queue_info.show_every_n_singers.to_string(),
         (QueueInfo, 2) => cfg.ticker.queue_info.precise_duration.to_string(),
@@ -287,6 +289,7 @@ fn toggle_bool(cfg: &mut Config, section: Section, idx: usize) {
         (Ticker, 4) => cfg.ticker.show_empty_singers = !cfg.ticker.show_empty_singers,
         (Ticker, 7) => cfg.ticker.show_request_button = !cfg.ticker.show_request_button,
         (Ticker, 10) => cfg.ticker.show_tiktok_live = !cfg.ticker.show_tiktok_live,
+        (Ticker, 17) => cfg.ticker.show_song_progress = !cfg.ticker.show_song_progress,
         (QueueInfo, 0) => cfg.ticker.queue_info.show_at_start = !cfg.ticker.queue_info.show_at_start,
         (QueueInfo, 2) => cfg.ticker.queue_info.precise_duration = !cfg.ticker.queue_info.precise_duration,
         (SingTime, 0) => cfg.ticker.sing_time.enabled = !cfg.ticker.sing_time.enabled,

@@ -183,6 +183,29 @@
 
   .empty-hero { color: var(--dim); font-style: italic; }
 
+  .song-progress { margin-top: 10px; }
+  .song-progress[hidden] { display: none; }
+  .progress-track {
+    height: 4px;
+    border-radius: 2px;
+    background: var(--border);
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    width: 0;
+    background: var(--now-color);
+    transition: width 0.25s linear;
+  }
+  .progress-times {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+
   table {
     width: 100%;
     border-collapse: collapse;
@@ -434,6 +457,10 @@
     <div class="label" id="hero-now-label">Now Singing</div>
     <div class="name empty-hero" id="now-name">—</div>
     <div class="song" id="now-song"></div>
+    <div class="song-progress" id="now-progress" hidden>
+      <div class="progress-track"><div class="progress-fill" id="now-progress-fill"></div></div>
+      <div class="progress-times"><span id="now-elapsed">0:00</span><span id="now-remaining"></span></div>
+    </div>
   </div>
   <div class="hero-card next" id="card-next">
     <div class="label" id="hero-next-label">Next Up</div>
@@ -615,6 +642,47 @@
     }
   }
 
+  // ── Song progress (show_song_progress) ─────────────────────────────────────
+  // kroak-time samples the position about every 500 ms and this page polls
+  // every 1.5 s, so the clock runs locally between polls. A fresh sample that
+  // is ahead of it, or way off (a seek, a new song), re-syncs it; one a little
+  // behind is just sample age and is ignored, so the clock never ticks back.
+  const progress = { posMs: 0, durMs: null, at: 0, running: false };
+
+  function fmtClock(ms) {
+    const t = Math.max(0, Math.floor(ms / 1000));
+    const h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, sec = String(t % 60).padStart(2, '0');
+    return h ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`;
+  }
+
+  function progressNow() {
+    const p = progress.posMs + (progress.running ? performance.now() - progress.at : 0);
+    return progress.durMs ? Math.min(p, progress.durMs) : p;
+  }
+
+  function renderProgress() {
+    if (!progress.running) return;
+    const p = progressNow(), d = progress.durMs;
+    document.getElementById('now-elapsed').textContent = fmtClock(p);
+    // Rounded up, so elapsed + remaining always adds up to the length.
+    document.getElementById('now-remaining').textContent = d ? '−' + fmtClock(d - p + 999) : '';
+    document.getElementById('now-progress-fill').style.width = d ? (100 * p / d).toFixed(2) + '%' : '0';
+  }
+
+  function syncProgress(s, nowSinger) {
+    const pos = s && s.song_position_ms;
+    const active = TICKER_CFG.show_song_progress !== false && !!nowSinger && typeof pos === 'number';
+    document.getElementById('now-progress').hidden = !active;
+    if (!active) { progress.running = false; return; }
+    const dur = s.song_duration_ms || null;
+    const drift = pos - progressNow();
+    if (!progress.running || drift > 0 || drift < -3000 || dur !== progress.durMs) {
+      Object.assign(progress, { posMs: pos, durMs: dur, at: performance.now(), running: true });
+    }
+    renderProgress();
+  }
+  setInterval(renderProgress, 250);
+
   async function update() {
     const dot    = document.getElementById('status-dot');
     const banner = document.getElementById('queue-banner');
@@ -628,6 +696,7 @@
         banner.hidden = true;
         document.getElementById('now-name').textContent = '—';
         document.getElementById('next-name').textContent = '—';
+        syncProgress(null, null);
         document.getElementById('tbody').innerHTML =
           `<tr><td colspan="3" id="empty-msg" style="color:#e6a23c">` +
           (s.status === 'database_not_found'
@@ -646,6 +715,7 @@
       // Between songs: current_singer (top of rotation) is "Up Next", "Now Singing" is empty.
       const nowSinger  = s.is_playing ? s.current_singer : null;
       const nextSinger = s.is_playing ? s.next_up : s.current_singer;
+      syncProgress(s, nowSinger);
 
       const nowName  = nowSinger?.name;
       const nextName = nextSinger?.name;
