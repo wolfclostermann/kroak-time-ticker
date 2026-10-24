@@ -25,8 +25,19 @@ Useful formulas:
 - Before the player reports anything (`is_playing` true, `song_position_ms` null): position 0, length from
   `current_singer.next_song_duration_ms`.
 
-- [ ] **Use kroak-time's new `playback_rate` field so the song clock stays right when the tempo is changed:**
-  kroak-time's `/api/state` now sends `playback_rate` (number | null) next to `song_position_ms` /
+- [x] **Use kroak-time's new `playback_rate` field so the song clock stays right when the tempo is changed:**
+  **Done:** steps 1–3 as described, plus the start-of-song fix below: a rate with no position shows
+  0:00 against `current_singer.next_song_duration_ms`, and the player's real length replaces that
+  estimate without moving the clock. Two deviations:
+  - **Step 4 (drift check) kept at +0 / −3000 ms, not ±1500.** kroak-time's value is up to ~1 s
+    old, but the ticker re-polls it only every 1.5 s, so what the page sees can be ~2.5 s old. A
+    −1500 limit would make the clock tick backwards whenever a staler-than-usual sample arrived.
+  - **"Clock keeps running while paused" didn't apply.** A paused song has `is_playing: false`,
+    which the page treats as between songs: there's no "Now Singing" singer, so the progress row is
+    hidden and the clock stopped. Only relevant if the row should later stay visible, frozen, while
+    paused.
+
+  Original note — kroak-time's `/api/state` now sends `playback_rate` (number | null) next to `song_position_ms` /
   `song_duration_ms` (kroak-time branch `trunk/ticker-api-additions`, documented in its `docs/API.md`).
   It's the tempo control as a rate: `1.0` = normal, `0.9` = 90 %, range `0.5`–`1.5`, `null` while idle,
   and it can change mid-song. Position and duration are in *song* time, so at any rate other than 1.0
