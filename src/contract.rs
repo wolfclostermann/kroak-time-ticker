@@ -209,8 +209,8 @@ pub fn parse(text: &str) -> Result<Contract> {
     Ok(Contract {
         listen,
         ops,
-        requested_by_first: cfg_str("requested_by_first_name").unwrap_or_else(|| "Phone".into()),
-        requested_by_last: cfg_str("requested_by_last_name").unwrap_or_else(|| "{device_code}".into()),
+        requested_by_first: cfg_str("requested_by_first_name").unwrap_or_else(|| "{device_code}".into()),
+        requested_by_last: cfg_str("requested_by_last_name").unwrap_or_else(|| "{comment}".into()),
     })
 }
 
@@ -364,6 +364,8 @@ fn fill(template: &str, r: &SongRequest) -> String {
         .replace("{device_id}", &r.device_id)
         .replace("{fingerprint}", &r.fingerprint)
         .replace("{singer}", &r.singer)
+        // Last, so free text that happens to contain "{singer}" etc. stays literal.
+        .replace("{comment}", &r.comment)
 }
 
 impl Contract {
@@ -467,6 +469,10 @@ mod tests {
     use serde_json::json;
 
     fn submit(store: &RequestStore, device: &str) -> SongRequest {
+        submit_with_comment(store, device, "")
+    }
+
+    fn submit_with_comment(store: &RequestStore, device: &str, comment: &str) -> SongRequest {
         store
             .submit(
                 NewRequest {
@@ -477,6 +483,7 @@ mod tests {
                     device_id: device.into(),
                     fingerprint: "fp".into(),
                     in_catalog: true,
+                    comment: comment.into(),
                 },
                 0,
             )
@@ -504,8 +511,8 @@ mod tests {
         assert_eq!(item["request_id"], r.request_id);
         assert_eq!(item["singer"], "Alice");
         assert_eq!(item["key_change"], -2);
-        assert_eq!(item["user_first_name"], "Phone");
-        assert_eq!(item["user_last_name"], r.device_code());
+        assert_eq!(item["user_first_name"], r.device_code());
+        assert_eq!(item["user_last_name"], "");
 
         call(&c, &s, json!({"command": "deleteRequest", "request_id": r.request_id}));
         assert!(s.list().is_empty());
@@ -573,6 +580,18 @@ mod tests {
         // Wrong literal / wrong path match nothing.
         assert!(c.handle(&s, &Method::POST, "/okj/list", &json!({"cmd": "nope"})).is_none());
         assert!(c.handle(&s, &Method::POST, "/", &json!({"cmd": "list"})).is_none());
+    }
+
+    #[test]
+    fn comment_fills_requested_by() {
+        let c = parse(BUILTIN_CONTRACT).unwrap();
+        let s = RequestStore::in_memory();
+        let r = submit_with_comment(&s, "dev-a", "for {singer}'s birthday");
+        let got = call(&c, &s, json!({"command": "getRequests"}));
+        let item = &got["requests"][0];
+        assert_eq!(item["user_first_name"], r.device_code());
+        // Placeholder-looking text inside the comment stays literal.
+        assert_eq!(item["user_last_name"], "for {singer}'s birthday");
     }
 
     #[test]

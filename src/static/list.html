@@ -296,7 +296,8 @@
   }
 
   .req-field input,
-  .req-field select {
+  .req-field select,
+  .req-field textarea {
     width: 100%;
     background: var(--bg);
     color: var(--text);
@@ -306,7 +307,10 @@
     font: inherit;
     font-size: 16px; /* ≥16px stops iOS zooming in on focus */
   }
+  .req-field textarea { resize: vertical; min-height: 3.2em; }
+  .req-optional { text-transform: none; letter-spacing: normal; opacity: 0.7; }
   .req-field input:focus,
+  .req-field textarea:focus,
   .req-field select:focus { outline: none; border-color: var(--accent); }
 
   .ac-list {
@@ -418,6 +422,10 @@
       <div class="req-field wide">
         <label for="req-key">Key</label>
         <select id="req-key" name="key_change"></select>
+      </div>
+      <div class="req-field wide" id="req-comment-field" hidden>
+        <label for="req-comment">Comment <span class="req-optional">(optional)</span></label>
+        <textarea id="req-comment" name="comment" maxlength="200" rows="2" autocapitalize="sentences"></textarea>
       </div>
     </div>
     <p class="req-hint" id="req-hint">Start typing to search the song list — or just type any song that isn't in it.</p>
@@ -730,6 +738,8 @@
     const btn = $('cta-request'), panel = $('req-panel'), form = $('req-form');
     const nameEl = $('req-name'), artistEl = $('req-artist'), titleEl = $('req-title'), keyEl = $('req-key');
     const msgEl = $('req-msg'), hintEl = $('req-hint'), submitEl = $('req-submit');
+    const commentEl = $('req-comment');
+    $('req-comment-field').hidden = !REQUESTS_CFG.comment_field;
 
     // ── Persistence: localStorage, with a cookie fallback (some in-app
     // browsers block or wipe localStorage) ────────────────────────────────────
@@ -1077,6 +1087,7 @@
             device_id: deviceId(),
             fingerprint: fingerprint(),
             in_catalog: inCatalog,
+            comment: REQUESTS_CFG.comment_field ? commentEl.value.trim() : '',
           }),
         });
         const res = await r.json().catch(() => ({}));
@@ -1084,7 +1095,7 @@
 
         save(NAME_KEY, singer);
         showMsg(`Sent! “${title}” for ${singer}. Want to request another?`, 'ok');
-        artistEl.value = titleEl.value = '';
+        artistEl.value = titleEl.value = commentEl.value = '';
         keyEl.value = '0';
         selArtist = selSong = null;
       } catch (err) {
