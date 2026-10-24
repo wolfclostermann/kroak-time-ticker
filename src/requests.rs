@@ -14,6 +14,8 @@ pub const STORE_FILE: &str = "song-requests.json";
 
 /// Longest artist/title/name accepted from the public form.
 pub const MAX_FIELD_LEN: usize = 120;
+/// Longest free-text comment accepted from the public form.
+pub const MAX_COMMENT_LEN: usize = 200;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SongRequest {
@@ -35,6 +37,9 @@ pub struct SongRequest {
     /// Whether the song was picked from the catalog (vs. typed freehand).
     #[serde(default)]
     pub in_catalog: bool,
+    /// Optional free-text note from the requester; empty if none.
+    #[serde(default)]
+    pub comment: String,
 }
 
 impl SongRequest {
@@ -91,6 +96,7 @@ pub struct NewRequest {
     pub device_id: String,
     pub fingerprint: String,
     pub in_catalog: bool,
+    pub comment: String,
 }
 
 impl RequestStore {
@@ -159,6 +165,7 @@ impl RequestStore {
             device_id: req.device_id,
             fingerprint: req.fingerprint,
             in_catalog: req.in_catalog,
+            comment: req.comment,
         };
         s.next_id += 1;
         s.requests.push(r.clone());
@@ -206,6 +213,7 @@ mod tests {
             device_id: device.into(),
             fingerprint: "fp".into(),
             in_catalog: true,
+            comment: String::new(),
         }
     }
 

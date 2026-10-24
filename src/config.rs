@@ -408,6 +408,12 @@ pub struct RequestsConfig {
     /// 0 = unlimited.
     #[serde(default = "default_max_pending_per_device")]
     pub max_pending_per_device: usize,
+
+    /// Show an optional free-text "Comment" box on the request form. The
+    /// comment reaches kroak-time through the contract's `{comment}`
+    /// placeholder (by default, in the "requested by" column).
+    #[serde(default = "default_true")]
+    pub comment_field: bool,
 }
 
 impl Default for RequestsConfig {
@@ -417,6 +423,7 @@ impl Default for RequestsConfig {
             catalog_path: String::new(),
             contract_path: default_contract_path(),
             max_pending_per_device: default_max_pending_per_device(),
+            comment_field: true,
         }
     }
 }
@@ -602,4 +609,5 @@ const CONFIG_HEADER: &str = r##"# kroak-time-ticker configuration
 #                             # request-source definition (written with defaults if missing).
 #                             # Copy the same file into kroak-time's request-sources folder.
 # max_pending_per_device = 5 # Most waiting requests one phone can have. 0 = unlimited.
+# comment_field = true       # Show an optional free-text "Comment" box on the request form.
 "##;

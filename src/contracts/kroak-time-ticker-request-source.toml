@@ -30,9 +30,11 @@ base_url = "http://127.0.0.1:8767/"
 # Ticker-side only (kroak-time ignores unreferenced config keys): what to send
 # as the requester's first/last name. kroak-time shows them joined with a
 # space in its "requested by" column. Placeholders: {device_code} (4-char code,
-# stable per phone), {device_id}, {fingerprint}, {singer}.
-requested_by_first_name = "Phone"
-requested_by_last_name = "{device_code}"
+# stable per phone), {device_id}, {fingerprint}, {singer}, {comment} (the
+# request form's optional free-text comment; empty if none or switched off).
+# kroak-time has no dedicated comment field, so it rides along here.
+requested_by_first_name = "{device_code}"
+requested_by_last_name = "{comment}"
 
 [poll]
 guard_interval_ms = 2000

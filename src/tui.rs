@@ -139,6 +139,7 @@ fn fields(section: Section) -> &'static [FieldMeta] {
             FieldMeta { label: "catalog_path", help: "Song catalog: .csv/.tsv/.txt with artist + title columns, .json, or kroak-time's catalog.redb. Blank = kroak-time's default catalog.redb.", kind: FieldKind::Text, restart: false },
             FieldMeta { label: "contract_path", help: "kroak-time request-source definition describing the API served to kroak-time. Copy the same file into kroak-time's request-sources folder.", kind: FieldKind::Text, restart: true },
             FieldMeta { label: "max_pending_per_device", help: "Most waiting requests one phone can have at once. 0 = unlimited.", kind: FieldKind::Num, restart: false },
+            FieldMeta { label: "comment_field", help: "Show an optional free-text \"Comment\" box on the request form. Sent to kroak-time via the contract's {comment} placeholder.", kind: FieldKind::Bool, restart: false },
         ],
     }
 }
@@ -205,6 +206,7 @@ fn value_str(cfg: &Config, section: Section, idx: usize) -> String {
         (Requests, 1) => cfg.requests.catalog_path.clone(),
         (Requests, 2) => cfg.requests.contract_path.clone(),
         (Requests, 3) => cfg.requests.max_pending_per_device.to_string(),
+        (Requests, 4) => cfg.requests.comment_field.to_string(),
         _ => String::new(),
     }
 }
@@ -294,6 +296,7 @@ fn toggle_bool(cfg: &mut Config, section: Section, idx: usize) {
         (SingTime, 2) => cfg.ticker.sing_time.show_in_banner = !cfg.ticker.sing_time.show_in_banner,
         (Ngrok, 0) => cfg.ngrok.enabled = !cfg.ngrok.enabled,
         (Requests, 0) => cfg.requests.enabled = !cfg.requests.enabled,
+        (Requests, 4) => cfg.requests.comment_field = !cfg.requests.comment_field,
         _ => {}
     }
 }

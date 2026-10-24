@@ -2,7 +2,7 @@ use crate::catalog::CatalogStore;
 use crate::config::Config;
 use crate::contract;
 use crate::ngrok_tunnel;
-use crate::requests::{NewRequest, RequestStore, SubmitError, MAX_FIELD_LEN};
+use crate::requests::{NewRequest, RequestStore, SubmitError, MAX_COMMENT_LEN, MAX_FIELD_LEN};
 use crate::state::{fetch_state, KaraokeState};
 use anyhow::Result;
 use axum::{
@@ -59,7 +59,10 @@ fn render_scroll_html(scroll_cfg: &crate::config::ScrollConfig, ticker_cfg: &cra
 
 fn render_list_html(cfg: &crate::config::TickerConfig, requests_cfg: &crate::config::RequestsConfig) -> String {
     // Only what the page needs from [requests] — not file paths.
-    let requests_page_cfg = serde_json::json!({ "enabled": requests_cfg.enabled });
+    let requests_page_cfg = serde_json::json!({
+        "enabled": requests_cfg.enabled,
+        "comment_field": requests_cfg.comment_field,
+    });
     LIST_HTML
         .replace(
             "__TICKER_CFG__",
@@ -325,17 +328,23 @@ struct RequestBody {
     fingerprint: String,
     #[serde(default)]
     in_catalog: bool,
+    #[serde(default)]
+    comment: String,
 }
 
 fn clean(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(MAX_FIELD_LEN).collect()
+    clean_to(s, MAX_FIELD_LEN)
+}
+
+fn clean_to(s: &str, max_len: usize) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(max_len).collect()
 }
 
 /// `POST /api/request` from the singer page's request form.
 fn submit_handler(cfg: SharedConfig, store: RequestStore, body: RequestBody) -> Response {
-    let (enabled, max_pending) = {
+    let (enabled, max_pending, comment_field) = {
         let cfg = cfg.read().unwrap();
-        (cfg.requests.enabled, cfg.requests.max_pending_per_device)
+        (cfg.requests.enabled, cfg.requests.max_pending_per_device, cfg.requests.comment_field)
     };
     let reply = |status: StatusCode, v: serde_json::Value| (status, Json(v)).into_response();
     if !enabled {
@@ -369,6 +378,8 @@ fn submit_handler(cfg: SharedConfig, store: RequestStore, body: RequestBody) -> 
         device_id,
         fingerprint,
         in_catalog: body.in_catalog,
+        // Ignored while the form hides the box, so a stale page can't sneak one in.
+        comment: if comment_field { clean_to(&body.comment, MAX_COMMENT_LEN) } else { String::new() },
     };
     match store.submit(new, max_pending) {
         Ok(r) => {
