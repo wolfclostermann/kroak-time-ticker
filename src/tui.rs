@@ -97,7 +97,7 @@ fn fields(section: Section) -> &'static [FieldMeta] {
             FieldMeta { label: "hero_next_label", help: "Label above the next singer's name on the dashboard (/).", kind: FieldKind::Text, restart: false },
             FieldMeta { label: "badge_now_text", help: "Badge text marking the current singer's row in the dashboard table.", kind: FieldKind::Text, restart: false },
             FieldMeta { label: "badge_next_text", help: "Badge text marking the next singer's row in the dashboard table.", kind: FieldKind::Text, restart: false },
-            FieldMeta { label: "show_song_progress", help: "Show elapsed / remaining time and a progress bar for the song on stage, under the current singer on the dashboard (/).", kind: FieldKind::Bool, restart: false },
+            FieldMeta { label: "show_song_progress", help: "Show elapsed / remaining time and a progress bar for the song on stage: under the current singer on the dashboard (/), and along the bottom of /scroll.", kind: FieldKind::Bool, restart: false },
         ],
         Section::QueueInfo => &[
             FieldMeta { label: "show_at_start", help: "Show the singer-count/queue-time banner as soon as the ticker loads.", kind: FieldKind::Bool, restart: false },
@@ -129,6 +129,8 @@ fn fields(section: Section) -> &'static [FieldMeta] {
             FieldMeta { label: "label_next", help: "Text of the \"NEXT\" label before the next singer.", kind: FieldKind::Text, restart: false },
             FieldMeta { label: "label_up", help: "Text of the \"THEN\" label before each upcoming-singers group.", kind: FieldKind::Text, restart: false },
             FieldMeta { label: "label_info", help: "Text of the \"QUEUE\" label on the singer-count/queue-time banner.", kind: FieldKind::Text, restart: false },
+            FieldMeta { label: "color_progress", help: "Song progress bar color, along the bottom of the banner (needs show_song_progress).", kind: FieldKind::Text, restart: false },
+            FieldMeta { label: "progress_height", help: "Song progress bar height in pixels. 0 hides it.", kind: FieldKind::Num, restart: false },
         ],
         Section::Ngrok => &[
             FieldMeta { label: "enabled", help: "Share the ticker over the internet via an ngrok tunnel, in addition to serving it locally.", kind: FieldKind::Bool, restart: true },
@@ -150,7 +152,7 @@ fn field_count(section: Section) -> usize {
 }
 
 fn is_color_field(section: Section, idx: usize) -> bool {
-    section == Section::Scroll && matches!(idx, 1 | 5..=11)
+    section == Section::Scroll && matches!(idx, 1 | 5..=11 | 16)
 }
 
 fn value_str(cfg: &Config, section: Section, idx: usize) -> String {
@@ -201,6 +203,8 @@ fn value_str(cfg: &Config, section: Section, idx: usize) -> String {
         (Scroll, 13) => cfg.scroll.label_next.clone(),
         (Scroll, 14) => cfg.scroll.label_up.clone(),
         (Scroll, 15) => cfg.scroll.label_info.clone(),
+        (Scroll, 16) => cfg.scroll.color_progress.clone(),
+        (Scroll, 17) => cfg.scroll.progress_height.to_string(),
         (Ngrok, 0) => cfg.ngrok.enabled.to_string(),
         (Ngrok, 1) => cfg.ngrok.authtoken.clone(),
         (Ngrok, 2) => cfg.ngrok.domain.clone(),
@@ -270,6 +274,8 @@ fn set_text(cfg: &mut Config, section: Section, idx: usize, text: &str) -> std::
         (Scroll, 13) => cfg.scroll.label_next = text.to_string(),
         (Scroll, 14) => cfg.scroll.label_up = text.to_string(),
         (Scroll, 15) => cfg.scroll.label_info = text.to_string(),
+        (Scroll, 16) => cfg.scroll.color_progress = text.to_string(),
+        (Scroll, 17) => cfg.scroll.progress_height = parse_num(text)?,
         (Ngrok, 1) => cfg.ngrok.authtoken = text.to_string(),
         (Ngrok, 2) => cfg.ngrok.domain = text.to_string(),
         (Requests, 1) => cfg.requests.catalog_path = text.to_string(),

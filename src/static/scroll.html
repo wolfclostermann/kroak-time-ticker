@@ -52,11 +52,21 @@
     font-size: 1.15em;
     margin-right: 12px;
   }
+
+  #song-progress {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    width: 0;
+    transition: width 0.25s linear;
+  }
+  #song-progress[hidden] { display: none; }
 </style>
 </head>
 <body>
 <div class="scroll-container" id="container">
   <div id="scroll-track">Starting...</div>
+  <div id="song-progress" hidden></div>
 </div>
 
 <script>
@@ -70,6 +80,10 @@
   container.style.background = SCROLL_CFG.bg;
   container.style.fontFamily = SCROLL_CFG.font;
   container.style.fontSize   = SCROLL_CFG.size + 'px';
+
+  const progressBar = document.getElementById('song-progress');
+  progressBar.style.height     = SCROLL_CFG.progress_height + 'px';
+  progressBar.style.background = SCROLL_CFG.color_progress;
 
   // Inject color rules so the class rules pick them up.
   document.head.insertAdjacentHTML('beforeend', `<style>
@@ -365,12 +379,70 @@
     requestAnimationFrame(animate);
   }
 
+  // ── Song progress (show_song_progress) ────────────────────────────────────
+  // Same clock as the dashboard's (list.html): position and length are in
+  // song time and the bar fills in song time, matching kroak-time's own bar.
+  // It counts forward locally between polls; a sample ahead of it, or more
+  // than 3 s behind (a seek, a new song), re-syncs it, so it never steps back.
+  const progress = { posMs: 0, durMs: null, rate: 1, at: 0, running: false };
+
+  function progressNow() {
+    const p = progress.posMs + (progress.running ? (performance.now() - progress.at) * progress.rate : 0);
+    return progress.durMs ? Math.min(p, progress.durMs) : p;
+  }
+
+  function renderProgress() {
+    if (!progress.running) return;
+    const d = progress.durMs;
+    progressBar.style.width = d ? (100 * progressNow() / d).toFixed(2) + '%' : '0';
+  }
+
+  function syncProgress(s) {
+    const nowSinger = (s && s.is_playing && s.current_singer) ? s.current_singer : null;
+    const rawRate = s && s.playback_rate;
+    const hasRate = typeof rawRate === 'number' && rawRate > 0;
+    let pos = s && s.song_position_ms, dur = s && s.song_duration_ms;
+    if (typeof pos !== 'number' && hasRate && nowSinger) {
+      // A rate with no position yet: the first moment of a song. Count from
+      // 0:00 against the catalog length, until the player reports in.
+      pos = 0;
+      dur = nowSinger.next_song_duration_ms;
+    }
+    // No length, no bar: unlike the dashboard there's no elapsed text to
+    // fall back on.
+    const active = TICKER_CFG.show_song_progress !== false && SCROLL_CFG.progress_height > 0 &&
+      !!nowSinger && typeof pos === 'number' && !!dur;
+    progressBar.hidden = !active;
+    if (!active) { progress.running = false; return; }
+
+    const rate = hasRate ? rawRate : 1;  // older kroak-time: no rate, normal speed
+    const now = performance.now();
+    if (progress.running && rate !== progress.rate) {
+      // Tempo changed: bank what was counted at the old rate before switching.
+      Object.assign(progress, { posMs: progressNow(), at: now, rate });
+    }
+    const drift = pos - progressNow();
+    if (!progress.running || drift > 0 || drift < -3000) {
+      Object.assign(progress, { posMs: pos, at: now, rate, running: true });
+    }
+    progress.durMs = dur;
+    renderProgress();
+  }
+  setInterval(renderProgress, 250);
+
+  // The song position changes on every poll; leave it out when deciding
+  // whether the scrolling text needs rebuilding.
+  function contentKey(s) {
+    return JSON.stringify(s, (k, v) => (k === 'song_position_ms' ? undefined : v));
+  }
+
   // ── Data fetching ─────────────────────────────────────────────────────────
   async function fetchState() {
     try {
       const r    = await fetch('/api/state');
       const next = await r.json();
-      if (JSON.stringify(next) !== JSON.stringify(state)) {
+      syncProgress(next);
+      if (contentKey(next) !== contentKey(state)) {
         state = next;
         updateContent();
       }
