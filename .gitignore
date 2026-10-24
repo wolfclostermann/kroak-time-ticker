@@ -4,3 +4,4 @@ openkj-ticker.toml
 kroak-time-ticker.log
 song-requests.json
 catalog-cache.json
+request-source.toml
