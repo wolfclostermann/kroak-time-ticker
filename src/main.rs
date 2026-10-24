@@ -2,6 +2,7 @@ mod catalog;
 mod config;
 mod contract;
 mod ngrok_tunnel;
+mod paths;
 mod requests;
 mod server;
 mod state;
@@ -22,8 +23,11 @@ use tokio::sync::Notify;
 )]
 struct Args {
     /// Path to the config file (created with defaults if it does not exist).
-    #[arg(short, long, default_value = "kroak-time-ticker.toml")]
-    config: PathBuf,
+    /// Default: kroak-time-ticker.toml in the ticker's per-user folder
+    /// (%APPDATA%\kroak-time-ticker\config\ on Windows). State files and logs
+    /// live next to it.
+    #[arg(short, long)]
+    config: Option<PathBuf>,
 
     /// Override the kroak-time upstream API URL.
     #[arg(long)]
@@ -52,13 +56,13 @@ struct Args {
     headless: bool,
 }
 
-/// Loads KEY=VALUE pairs from a `.env` file in the current directory into the
-/// process environment, without overriding variables already set (e.g. by the
-/// shell). Missing file is not an error. No quoting/escaping support — kept
-/// intentionally simple since it only needs to carry secrets like
-/// NGROK_AUTHTOKEN that config files shouldn't hold in plain text.
-fn load_dotenv() {
-    let Ok(content) = std::fs::read_to_string(".env") else {
+/// Loads KEY=VALUE pairs from a `.env` file into the process environment,
+/// without overriding variables already set (e.g. by the shell). Missing file
+/// is not an error. No quoting/escaping support — kept intentionally simple
+/// since it only needs to carry secrets like NGROK_AUTHTOKEN that config files
+/// shouldn't hold in plain text.
+fn load_dotenv(path: &std::path::Path) {
+    let Ok(content) = std::fs::read_to_string(path) else {
         return;
     };
     for line in content.lines() {
@@ -78,9 +82,14 @@ fn load_dotenv() {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    load_dotenv();
-
     let args = Args::parse();
+
+    let config_path = paths::init(args.config.as_deref());
+    std::fs::create_dir_all(paths::data_dir())
+        .with_context(|| format!("Failed to create {}", paths::data_dir().display()))?;
+    let log_dir = paths::file("logs");
+    std::fs::create_dir_all(&log_dir)
+        .with_context(|| format!("Failed to create {}", log_dir.display()))?;
 
     let filter = || {
         tracing_subscriber::EnvFilter::try_from_default_env()
@@ -92,11 +101,12 @@ async fn main() -> Result<()> {
     } else {
         // The TUI owns the terminal (alternate screen + raw mode) — send logs
         // to a file instead of stdout so a stray log line can't corrupt it.
+        let log_path = log_dir.join("kroak-time-ticker.log");
         let log_file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open("kroak-time-ticker.log")
-            .context("Failed to open kroak-time-ticker.log")?;
+            .open(&log_path)
+            .with_context(|| format!("Failed to open {}", log_path.display()))?;
         tracing_subscriber::fmt()
             .with_env_filter(filter())
             .with_writer(std::sync::Mutex::new(log_file))
@@ -104,7 +114,15 @@ async fn main() -> Result<()> {
             .init();
     }
 
-    let mut cfg = config::Config::load_or_create(&args.config)?;
+    if args.config.is_none() {
+        paths::migrate_from_cwd(&config_path);
+    }
+    // The data folder's .env, then one in the current directory (a dev
+    // checkout's); neither overrides what's already set.
+    load_dotenv(&paths::file(".env"));
+    load_dotenv(std::path::Path::new(".env"));
+
+    let mut cfg = config::Config::load_or_create(&config_path)?;
 
     // CLI flags override config file values.
     if let Some(url) = args.upstream_url {
@@ -143,7 +161,7 @@ async fn main() -> Result<()> {
 
         let tui_cfg = shared_cfg.clone();
         let tui_shutdown = shutdown.clone();
-        let tui_path = args.config.clone();
+        let tui_path = config_path.clone();
         tokio::task::spawn_blocking(move || tui::run(tui_cfg, tui_shutdown, tui_path, info_rx))
             .await
             .context("TUI thread panicked")??;

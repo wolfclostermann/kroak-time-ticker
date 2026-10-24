@@ -127,7 +127,7 @@ impl CatalogStore {
 pub fn resolve_path(configured: &str) -> Option<PathBuf> {
     let configured = configured.trim();
     if !configured.is_empty() {
-        return Some(PathBuf::from(configured));
+        return Some(crate::paths::resolve(configured));
     }
     default_kroak_time_catalog().filter(|p| p.exists())
 }
@@ -135,17 +135,7 @@ pub fn resolve_path(configured: &str) -> Option<PathBuf> {
 /// kroak-time keeps `catalog.redb` in its confy config directory unless a
 /// custom `data_dir` is set in its settings.
 fn default_kroak_time_catalog() -> Option<PathBuf> {
-    let base = if cfg!(windows) {
-        PathBuf::from(std::env::var_os("APPDATA")?).join("kroak-time").join("config")
-    } else if cfg!(target_os = "macos") {
-        PathBuf::from(std::env::var_os("HOME")?).join("Library/Application Support/rs.kroak-time")
-    } else {
-        match std::env::var_os("XDG_CONFIG_HOME") {
-            Some(x) => PathBuf::from(x).join("kroak-time"),
-            None => PathBuf::from(std::env::var_os("HOME")?).join(".config/kroak-time"),
-        }
-    };
-    Some(base.join("catalog.redb"))
+    Some(crate::paths::app_config_dir("kroak-time")?.join("catalog.redb"))
 }
 
 pub fn load(path: &Path) -> Result<Vec<Song>> {
@@ -322,7 +312,7 @@ fn serve(songs: &[Song]) -> Served {
 fn save_cache(songs: &[Song]) {
     match serde_json::to_vec(songs) {
         Ok(json) => {
-            if let Err(e) = std::fs::write(CACHE_FILE, json) {
+            if let Err(e) = std::fs::write(crate::paths::file(CACHE_FILE), json) {
                 tracing::warn!("Couldn't write {CACHE_FILE}: {e}");
             }
         }
@@ -331,7 +321,7 @@ fn save_cache(songs: &[Song]) {
 }
 
 fn load_cache() -> Option<Served> {
-    let text = std::fs::read_to_string(CACHE_FILE).ok()?;
+    let text = std::fs::read_to_string(crate::paths::file(CACHE_FILE)).ok()?;
     let songs: Vec<Song> = serde_json::from_str(&text).ok()?;
     Some(serve(&songs))
 }
