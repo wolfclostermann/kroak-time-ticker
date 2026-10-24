@@ -119,7 +119,7 @@ pub async fn run(
         let catalog_path = startup.requests.catalog_path.clone();
         tokio::task::spawn_blocking(move || warm.refresh(&catalog_path));
 
-        let contract_path = std::path::PathBuf::from(&startup.requests.contract_path);
+        let contract_path = crate::paths::resolve(&startup.requests.contract_path);
         match contract::ensure_contract_file(&contract_path).and_then(|_| contract::load(&contract_path)) {
             Ok(c) => {
                 let addr = c.listen;

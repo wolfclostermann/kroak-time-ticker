@@ -660,7 +660,7 @@ fn draw(f: &mut Frame, app: &App) {
     let area = f.area();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(5), Constraint::Length(7), Constraint::Length(2)])
+        .constraints([Constraint::Length(3), Constraint::Min(5), Constraint::Length(8), Constraint::Length(2)])
         .split(area);
 
     draw_tabs(f, chunks[0], app);
@@ -734,6 +734,8 @@ fn draw_status(f: &mut Frame, area: Rect, app: &App) {
                 )),
                 None => Line::from(Span::styled(format!("{:<11}disabled", "Requests"), Style::default().fg(Color::DarkGray))),
             });
+
+            lines.push(Line::from(vec![label("Data"), Span::raw(crate::paths::data_dir().display().to_string())]));
 
             lines
         }

@@ -4,7 +4,7 @@
 //! contract-driven request server in `contract.rs`, the same way it pulls
 //! from wcis-helper.
 //!
-//! Requests are persisted to `song-requests.json` in the working directory
+//! Requests are persisted to `song-requests.json` in the data folder
 //! so a ticker restart mid-show doesn't lose ones kroak-time hasn't taken yet.
 
 use serde::{Deserialize, Serialize};
@@ -101,7 +101,7 @@ pub struct NewRequest {
 
 impl RequestStore {
     pub fn load() -> Self {
-        let persisted = std::fs::read_to_string(STORE_FILE)
+        let persisted = std::fs::read_to_string(crate::paths::file(STORE_FILE))
             .ok()
             .and_then(|t| serde_json::from_str(&t).ok())
             .unwrap_or_default();
@@ -180,7 +180,7 @@ impl RequestStore {
         }
         match serde_json::to_vec_pretty(s) {
             Ok(json) => {
-                if let Err(e) = std::fs::write(STORE_FILE, json) {
+                if let Err(e) = std::fs::write(crate::paths::file(STORE_FILE), json) {
                     tracing::warn!("Couldn't write {STORE_FILE}: {e}");
                 }
             }
