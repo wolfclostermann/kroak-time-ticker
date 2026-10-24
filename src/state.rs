@@ -6,6 +6,10 @@ pub struct Singer {
     pub name: String,
     pub next_song_artist: Option<String>,
     pub next_song_title: Option<String>,
+    /// Catalog length of that song in ms, at normal speed; `null` when
+    /// unknown or from an older kroak-time.
+    #[serde(default)]
+    pub next_song_duration_ms: Option<u64>,
     pub is_current: bool,
     /// Estimated seconds from now until this singer next starts singing (0 =
     /// on stage now). `null`/absent when kroak-time has rotation timing off,
@@ -32,13 +36,20 @@ pub struct KaraokeState {
     /// older kroak-time that doesn't send the field yet.
     #[serde(default)]
     pub queue_duration_secs: i64,
-    /// Playback position of the song on stage, in ms; `null` while idle or
-    /// from an older kroak-time that doesn't send it.
+    /// Playback position of the song on stage, in ms of song time; `null`
+    /// while idle, for the first moment of a song, or from an older
+    /// kroak-time that doesn't send it.
     #[serde(default)]
     pub song_position_ms: Option<u64>,
-    /// Length of the song on stage, in ms; `null` while idle or unknown.
+    /// Length of the song on stage, in ms of song time; present or `null`
+    /// together with `song_position_ms`.
     #[serde(default)]
     pub song_duration_ms: Option<u64>,
+    /// Tempo of the song on stage (1.0 = normal): song time runs this many
+    /// times faster than real time. `null` while idle or from an older
+    /// kroak-time, which the dashboard reads as 1.0.
+    #[serde(default)]
+    pub playback_rate: Option<f64>,
 }
 
 pub async fn fetch_state(upstream_url: &str) -> Result<KaraokeState> {

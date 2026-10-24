@@ -105,6 +105,7 @@ def singer_obj(entry, is_current, sings_in_secs=None):
         "name": name,
         "next_song_artist": artist,
         "next_song_title": title,
+        "next_song_duration_ms": AVG_SONG_SECS * 1000 if title else None,
         "is_current": is_current,
         "sings_in_secs": sings_in_secs,
         "sings_at": sings_at,
@@ -157,6 +158,7 @@ def build_state():
         # /advance, like a real song that has finished but not been moved on.
         "song_position_ms": int(min(time.time() - started, AVG_SONG_SECS) * 1000) if playing else None,
         "song_duration_ms": AVG_SONG_SECS * 1000 if playing else None,
+        "playback_rate": 1.0 if playing else None,
     }
 
 

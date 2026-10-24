@@ -643,11 +643,13 @@
   }
 
   // ── Song progress (show_song_progress) ─────────────────────────────────────
-  // kroak-time samples the position about every 500 ms and this page polls
-  // every 1.5 s, so the clock runs locally between polls. A fresh sample that
-  // is ahead of it, or way off (a seek, a new song), re-syncs it; one a little
-  // behind is just sample age and is ignored, so the clock never ticks back.
-  const progress = { posMs: 0, durMs: null, at: 0, running: false };
+  // Position and length are in song time; at a tempo other than 1.0 song time
+  // runs `rate` times faster than real time. kroak-time's sample can be up to
+  // ~1 s old and the ticker re-polls it every 1.5 s, so the clock runs locally
+  // between polls. A fresh sample that is ahead of it, or way off (a seek, a
+  // new song), re-syncs it; one a little behind is just sample age and is
+  // ignored, so the clock never ticks back.
+  const progress = { posMs: 0, durMs: null, rate: 1, at: 0, running: false };
 
   function fmtClock(ms) {
     const t = Math.max(0, Math.floor(ms / 1000));
@@ -656,29 +658,48 @@
   }
 
   function progressNow() {
-    const p = progress.posMs + (progress.running ? performance.now() - progress.at : 0);
+    const p = progress.posMs + (progress.running ? (performance.now() - progress.at) * progress.rate : 0);
     return progress.durMs ? Math.min(p, progress.durMs) : p;
   }
 
   function renderProgress() {
     if (!progress.running) return;
     const p = progressNow(), d = progress.durMs;
+    // Elapsed and the bar are song time, matching kroak-time's own progress
+    // bar; remaining is real time, i.e. how long until the song ends. At 1.0
+    // the two add up to the length (remaining is rounded up for that).
     document.getElementById('now-elapsed').textContent = fmtClock(p);
-    // Rounded up, so elapsed + remaining always adds up to the length.
-    document.getElementById('now-remaining').textContent = d ? '−' + fmtClock(d - p + 999) : '';
+    document.getElementById('now-remaining').textContent = d ? '−' + fmtClock((d - p) / progress.rate + 999) : '';
     document.getElementById('now-progress-fill').style.width = d ? (100 * p / d).toFixed(2) + '%' : '0';
   }
 
   function syncProgress(s, nowSinger) {
-    const pos = s && s.song_position_ms;
+    const rawRate = s && s.playback_rate;
+    const hasRate = typeof rawRate === 'number' && rawRate > 0;
+    let pos = s && s.song_position_ms, dur = s && s.song_duration_ms;
+    if (typeof pos !== 'number' && hasRate && nowSinger) {
+      // A rate with no position yet: the first moment of a song. Count from
+      // 0:00 against the catalog length, until the player reports in.
+      pos = 0;
+      dur = nowSinger.next_song_duration_ms;
+    }
     const active = TICKER_CFG.show_song_progress !== false && !!nowSinger && typeof pos === 'number';
     document.getElementById('now-progress').hidden = !active;
     if (!active) { progress.running = false; return; }
-    const dur = s.song_duration_ms || null;
-    const drift = pos - progressNow();
-    if (!progress.running || drift > 0 || drift < -3000 || dur !== progress.durMs) {
-      Object.assign(progress, { posMs: pos, durMs: dur, at: performance.now(), running: true });
+
+    const rate = hasRate ? rawRate : 1;  // older kroak-time: no rate, normal speed
+    const now = performance.now();
+    if (progress.running && rate !== progress.rate) {
+      // Tempo changed: bank what was counted at the old rate before switching.
+      Object.assign(progress, { posMs: progressNow(), at: now, rate });
     }
+    const drift = pos - progressNow();
+    if (!progress.running || drift > 0 || drift < -3000) {
+      Object.assign(progress, { posMs: pos, at: now, rate, running: true });
+    }
+    // A length change alone (catalog estimate → player's real length) doesn't
+    // move the clock.
+    progress.durMs = dur || null;
     renderProgress();
   }
   setInterval(renderProgress, 250);
