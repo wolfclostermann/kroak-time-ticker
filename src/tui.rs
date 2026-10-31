@@ -433,13 +433,12 @@ struct App {
     store: RequestStore,
 }
 
-/// Ready-made replies, typed into the message box with F1–F5 (then Enter).
-const CANNED: [&str; 5] = [
-    "Got it — you're on the list!",
-    "Sorry, that one isn't in the catalog. Could you pick another?",
-    "Please come and see the host.",
-    "You're up soon — please be near the stage.",
-    "Sorry, we can't fit that one in tonight.",
+/// Ready-made replies, typed into the message box with F1–F4 (then Enter).
+const CANNED: [&str; 4] = [
+    "Soz lad, can't get that one",
+    "Come see Wolf at the booth",
+    "You're coming up, get ready",
+    "I'm afraid there's no more room",
 ];
 
 impl App {
@@ -702,7 +701,7 @@ fn step(
                 };
                 Ok((Mode::Singers { selected: Some(request_id) }, false))
             }
-            KeyCode::F(n @ 1..=5) => {
+            KeyCode::F(n @ 1..=4) => {
                 buffer = CANNED[n as usize - 1].to_string();
                 Ok((Mode::Message { request_id, buffer }, false))
             }
