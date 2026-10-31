@@ -342,9 +342,11 @@ fn clean_to(s: &str, max_len: usize) -> String {
 
 /// `POST /api/request` from the singer page's request form.
 fn submit_handler(cfg: SharedConfig, store: RequestStore, body: RequestBody) -> Response {
-    let (enabled, max_pending, comment_field) = {
+    let (enabled, max_pending, comment_field, dup_window_secs) = {
         let cfg = cfg.read().unwrap();
-        (cfg.requests.enabled, cfg.requests.max_pending_per_device, cfg.requests.comment_field)
+        let r = &cfg.requests;
+        let dup_window_secs = i64::try_from(r.duplicate_window_minutes.saturating_mul(60)).unwrap_or(i64::MAX);
+        (r.enabled, r.max_pending_per_device, r.comment_field, dup_window_secs)
     };
     let reply = |status: StatusCode, v: serde_json::Value| (status, Json(v)).into_response();
     if !enabled {
@@ -381,7 +383,7 @@ fn submit_handler(cfg: SharedConfig, store: RequestStore, body: RequestBody) -> 
         // Ignored while the form hides the box, so a stale page can't sneak one in.
         comment: if comment_field { clean_to(&body.comment, MAX_COMMENT_LEN) } else { String::new() },
     };
-    match store.submit(new, max_pending) {
+    match store.submit(new, max_pending, dup_window_secs) {
         Ok(r) => {
             tracing::info!(
                 "Song request #{} from {} ({}): {} — {} (key {:+})",
@@ -397,6 +399,27 @@ fn submit_handler(cfg: SharedConfig, store: RequestStore, body: RequestBody) -> 
             StatusCode::TOO_MANY_REQUESTS,
             serde_json::json!({ "ok": false, "error": format!("You already have {n} requests waiting — give the host a chance to add them first.") }),
         ),
+        Err(SubmitError::Duplicate { singer, title, secs_ago }) => {
+            tracing::info!("Refused repeat of “{title}” for {singer} (first sent {secs_ago}s ago)");
+            reply(
+                StatusCode::CONFLICT,
+                serde_json::json!({
+                    "ok": false,
+                    "duplicate": true,
+                    "error": format!("“{title}” for {singer} already reached the host {} — no need to send it again.", ago(secs_ago)),
+                }),
+            )
+        }
+    }
+}
+
+fn ago(secs: i64) -> String {
+    match secs {
+        ..=59 => "a moment ago".to_string(),
+        60..=119 => "a minute ago".to_string(),
+        120..=3599 => format!("{} minutes ago", secs / 60),
+        3600..=7199 => "an hour ago".to_string(),
+        _ => format!("{} hours ago", secs / 3600),
     }
 }
 

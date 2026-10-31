@@ -435,6 +435,13 @@ pub struct RequestsConfig {
     /// placeholder (by default, in the "requested by" column).
     #[serde(default = "default_true")]
     pub comment_field: bool,
+
+    /// Minutes during which the same song can't be requested again from the
+    /// same phone or under the same singer name. kroak-time takes requests
+    /// off the ticker within seconds, so the store remembers what was sent
+    /// even after it's gone. 0 = no duplicate check.
+    #[serde(default = "default_duplicate_window_minutes")]
+    pub duplicate_window_minutes: u64,
 }
 
 impl Default for RequestsConfig {
@@ -445,6 +452,7 @@ impl Default for RequestsConfig {
             contract_path: default_contract_path(),
             max_pending_per_device: default_max_pending_per_device(),
             comment_field: true,
+            duplicate_window_minutes: default_duplicate_window_minutes(),
         }
     }
 }
@@ -454,6 +462,9 @@ fn default_contract_path() -> String {
 }
 fn default_max_pending_per_device() -> usize {
     5
+}
+fn default_duplicate_window_minutes() -> u64 {
+    360
 }
 
 fn default_port() -> u16 {
@@ -635,4 +646,6 @@ const CONFIG_HEADER: &str = r##"# kroak-time-ticker configuration
 #                             # Copy the same file into kroak-time's request-sources folder.
 # max_pending_per_device = 5 # Most waiting requests one phone can have. 0 = unlimited.
 # comment_field = true       # Show an optional free-text "Comment" box on the request form.
+# duplicate_window_minutes = 360  # Refuse the same song again from the same phone or under
+#                             # the same singer name for this long (6 h = the night). 0 = off.
 "##;

@@ -61,19 +61,42 @@ pub fn device_code(device_id: &str) -> String {
     (0..4).map(|i| ALPHABET[((h >> (i * 5)) & 31) as usize] as char).collect()
 }
 
+/// Lowercase letters and digits only, so "Rein me in" / "Rein Me In!" and
+/// "Eva & Summer" / "eva &summer" compare equal.
+fn norm(s: &str) -> String {
+    s.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()
+}
+
+/// A request that was accepted, kept after kroak-time has taken it (which
+/// happens within seconds) so a resend of the same song can be recognised.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Sent {
+    device_id: String,
+    singer_key: String,
+    song_key: String,
+    singer: String,
+    title: String,
+    time: i64,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct Persisted {
     next_id: i64,
     serial: i32,
     accepting: bool,
     requests: Vec<SongRequest>,
+    #[serde(default)]
+    sent: Vec<Sent>,
 }
 
 impl Default for Persisted {
     fn default() -> Self {
-        Self { next_id: 1, serial: 1, accepting: true, requests: Vec::new() }
+        Self { next_id: 1, serial: 1, accepting: true, requests: Vec::new(), sent: Vec::new() }
     }
 }
+
+/// Upper bound on remembered sends, whatever the window.
+const MAX_SENT: usize = 1000;
 
 #[derive(Clone)]
 pub struct RequestStore {
@@ -86,6 +109,8 @@ pub struct RequestStore {
 pub enum SubmitError {
     NotAccepting,
     TooManyPending(usize),
+    /// Same song already sent from this phone or under this singer name.
+    Duplicate { singer: String, title: String, secs_ago: i64 },
 }
 
 pub struct NewRequest {
@@ -144,7 +169,23 @@ impl RequestStore {
     }
 
     /// Adds a request; `max_pending_per_device` = 0 means unlimited.
-    pub fn submit(&self, req: NewRequest, max_pending_per_device: usize) -> Result<SongRequest, SubmitError> {
+    /// `duplicate_window_secs` = 0 turns off the repeat-song check.
+    pub fn submit(
+        &self,
+        req: NewRequest,
+        max_pending_per_device: usize,
+        duplicate_window_secs: i64,
+    ) -> Result<SongRequest, SubmitError> {
+        self.submit_at(req, max_pending_per_device, duplicate_window_secs, unix_now())
+    }
+
+    fn submit_at(
+        &self,
+        req: NewRequest,
+        max_pending_per_device: usize,
+        duplicate_window_secs: i64,
+        now: i64,
+    ) -> Result<SongRequest, SubmitError> {
         let mut s = self.inner.write().unwrap();
         if !s.accepting {
             return Err(SubmitError::NotAccepting);
@@ -155,19 +196,46 @@ impl RequestStore {
                 return Err(SubmitError::TooManyPending(pending));
             }
         }
+
+        let singer_key = norm(&req.singer);
+        let song_key = format!("{}|{}", norm(&req.artist), norm(&req.title));
+        s.sent.retain(|x| now - x.time < duplicate_window_secs);
+        if let Some(prev) = s.sent.iter().find(|x| {
+            x.song_key == song_key && (x.device_id == req.device_id || x.singer_key == singer_key)
+        }) {
+            return Err(SubmitError::Duplicate {
+                singer: prev.singer.clone(),
+                title: prev.title.clone(),
+                secs_ago: now - prev.time,
+            });
+        }
+
         let r = SongRequest {
             request_id: s.next_id,
             singer: req.singer,
             artist: req.artist,
             title: req.title,
             key_change: req.key_change,
-            request_time: unix_now(),
+            request_time: now,
             device_id: req.device_id,
             fingerprint: req.fingerprint,
             in_catalog: req.in_catalog,
             comment: req.comment,
         };
         s.next_id += 1;
+        if duplicate_window_secs > 0 {
+            if s.sent.len() >= MAX_SENT {
+                s.sent.remove(0);
+            }
+            s.sent.push(Sent {
+                device_id: r.device_id.clone(),
+                singer_key,
+                song_key,
+                singer: r.singer.clone(),
+                title: r.title.clone(),
+                time: now,
+            });
+        }
         s.requests.push(r.clone());
         bump_serial(&mut s);
         self.persist(&s);
@@ -220,19 +288,19 @@ mod tests {
     #[test]
     fn per_device_limit_and_accepting() {
         let store = RequestStore::in_memory();
-        store.submit(new_req("dev-a"), 2).unwrap();
-        store.submit(new_req("dev-a"), 2).unwrap();
-        assert_eq!(store.submit(new_req("dev-a"), 2).unwrap_err(), SubmitError::TooManyPending(2));
-        assert!(store.submit(new_req("dev-b"), 2).is_ok());
+        store.submit(new_req("dev-a"), 2, 0).unwrap();
+        store.submit(new_req("dev-a"), 2, 0).unwrap();
+        assert_eq!(store.submit(new_req("dev-a"), 2, 0).unwrap_err(), SubmitError::TooManyPending(2));
+        assert!(store.submit(new_req("dev-b"), 2, 0).is_ok());
 
         store.set_accepting(false);
-        assert_eq!(store.submit(new_req("dev-c"), 0).unwrap_err(), SubmitError::NotAccepting);
+        assert_eq!(store.submit(new_req("dev-c"), 0, 0).unwrap_err(), SubmitError::NotAccepting);
     }
 
     #[test]
     fn delete_bumps_serial() {
         let store = RequestStore::in_memory();
-        let r = store.submit(new_req("dev-a"), 0).unwrap();
+        let r = store.submit(new_req("dev-a"), 0, 0).unwrap();
         let before = store.serial();
         store.delete(r.request_id);
         assert_ne!(store.serial(), before);
@@ -244,5 +312,55 @@ mod tests {
         assert_eq!(device_code("abc"), device_code("abc"));
         assert_ne!(device_code("abc"), device_code("abd"));
         assert_eq!(device_code("abc").len(), 4);
+    }
+
+    const HOUR: i64 = 3600;
+
+    #[test]
+    fn resend_after_kroak_time_took_it_is_refused() {
+        let store = RequestStore::in_memory();
+        let r = store.submit_at(new_req("dev-a"), 0, 6 * HOUR, 1000).unwrap();
+        store.delete(r.request_id); // kroak-time took it
+        let mut again = new_req("dev-a");
+        again.title = "sex on fire!".into(); // retyped, different case/punctuation
+        assert_eq!(
+            store.submit_at(again, 0, 6 * HOUR, 1040).unwrap_err(),
+            SubmitError::Duplicate { singer: "Alice".into(), title: "Sex on Fire".into(), secs_ago: 40 }
+        );
+    }
+
+    #[test]
+    fn same_name_on_another_phone_is_refused_but_other_people_are_not() {
+        let store = RequestStore::in_memory();
+        store.submit_at(new_req("dev-a"), 0, 6 * HOUR, 1000).unwrap();
+        let mut friend = new_req("dev-b");
+        friend.singer = "alice ".into();
+        assert!(matches!(store.submit_at(friend, 0, 6 * HOUR, 1010), Err(SubmitError::Duplicate { .. })));
+        let mut bob = new_req("dev-c");
+        bob.singer = "Bob".into();
+        assert!(store.submit_at(bob, 0, 6 * HOUR, 1020).is_ok());
+    }
+
+    #[test]
+    fn different_song_and_expired_window_are_allowed() {
+        let store = RequestStore::in_memory();
+        store.submit_at(new_req("dev-a"), 0, 6 * HOUR, 1000).unwrap();
+        let mut other = new_req("dev-a");
+        other.title = "Use Somebody".into();
+        assert!(store.submit_at(other, 0, 6 * HOUR, 1010).is_ok());
+        assert!(store.submit_at(new_req("dev-a"), 0, 6 * HOUR, 1000 + 6 * HOUR).is_ok());
+    }
+
+    #[test]
+    fn window_zero_allows_repeats() {
+        let store = RequestStore::in_memory();
+        store.submit_at(new_req("dev-a"), 0, 0, 1000).unwrap();
+        assert!(store.submit_at(new_req("dev-a"), 0, 0, 1001).is_ok());
+    }
+
+    #[test]
+    fn old_store_file_without_sent_still_loads() {
+        let p: Persisted = serde_json::from_str(r#"{"next_id":81,"serial":161,"accepting":true,"requests":[]}"#).unwrap();
+        assert!(p.sent.is_empty());
     }
 }
