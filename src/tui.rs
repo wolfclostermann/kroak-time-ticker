@@ -11,7 +11,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Tabs, Wrap},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Tabs, Wrap},
     Frame, Terminal,
 };
 use std::{
@@ -22,315 +22,363 @@ use std::{
 };
 use tokio::sync::Notify;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Section {
-    Server,
-    Ticker,
-    QueueInfo,
-    SingTime,
-    Scroll,
-    Ngrok,
-    Requests,
-}
+// ── Field values ────────────────────────────────────────────────────────────
+//
+// Every config field the TUI edits is reached through `Value`, so reading,
+// editing and toggling a field is one code path regardless of its type.
 
-const SECTIONS: [Section; 7] = [
-    Section::Ticker,
-    Section::QueueInfo,
-    Section::SingTime,
-    Section::Scroll,
-    Section::Requests,
-    Section::Server,
-    Section::Ngrok,
-];
-
-impl Section {
-    fn title(&self) -> &'static str {
-        match self {
-            Section::Server => "Server",
-            Section::Ticker => "Ticker",
-            Section::QueueInfo => "Queue Info",
-            Section::SingTime => "Sing Time",
-            Section::Scroll => "Scroll",
-            Section::Ngrok => "Ngrok",
-            Section::Requests => "Requests",
-        }
+trait Value {
+    fn raw(&self) -> String;
+    fn set_text(&mut self, _text: &str) -> std::result::Result<(), String> {
+        Err("not a text field".to_string())
+    }
+    fn toggle(&mut self) {}
+    fn as_list(&self) -> Option<&Vec<String>> {
+        None
+    }
+    fn as_list_mut(&mut self) -> Option<&mut Vec<String>> {
+        None
     }
 }
 
-#[derive(Clone, Copy)]
+impl Value for String {
+    fn raw(&self) -> String {
+        self.clone()
+    }
+    fn set_text(&mut self, text: &str) -> std::result::Result<(), String> {
+        *self = text.to_string();
+        Ok(())
+    }
+}
+
+impl Value for bool {
+    fn raw(&self) -> String {
+        self.to_string()
+    }
+    fn toggle(&mut self) {
+        *self = !*self;
+    }
+}
+
+impl Value for Vec<String> {
+    fn raw(&self) -> String {
+        self.join("; ")
+    }
+    fn as_list(&self) -> Option<&Vec<String>> {
+        Some(self)
+    }
+    fn as_list_mut(&mut self) -> Option<&mut Vec<String>> {
+        Some(self)
+    }
+}
+
+macro_rules! num_value {
+    ($($t:ty),*) => {$(
+        impl Value for $t {
+            fn raw(&self) -> String {
+                self.to_string()
+            }
+            fn set_text(&mut self, text: &str) -> std::result::Result<(), String> {
+                *self = text.trim().parse().map_err(|_| format!("\"{text}\" is not a valid number"))?;
+                Ok(())
+            }
+        }
+    )*};
+}
+num_value!(u16, u32, u64, usize);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum FieldKind {
     Bool,
     Text,
     Num,
     List,
+    Color,
+    Secret,
     Choice(&'static [&'static str]),
 }
 
-struct FieldMeta {
-    label: &'static str,
-    help: &'static str,
-    kind: FieldKind,
-    restart: bool,
+/// Declares every editable field once: its `Key`, where it lives in `Config`
+/// (which is also its TOML key), its kind, whether it needs a restart, and
+/// its help text.
+macro_rules! define_fields {
+    ($( $key:ident => $($p:ident).+ , $kind:expr , $restart:expr , $help:expr ; )*) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        enum Key { $($key),* }
+
+        fn field_ref(cfg: &Config, k: Key) -> &dyn Value {
+            match k { $(Key::$key => &cfg.$($p).+),* }
+        }
+
+        fn field_mut(cfg: &mut Config, k: Key) -> &mut dyn Value {
+            match k { $(Key::$key => &mut cfg.$($p).+),* }
+        }
+
+        /// Dotted TOML key, e.g. "ticker.queue_info.show_at_start".
+        fn config_key(k: Key) -> &'static str {
+            let s: &'static str = match k { $(Key::$key => concat!($(stringify!($p), "."),+)),* };
+            s.trim_end_matches('.')
+        }
+
+        fn kind(k: Key) -> FieldKind {
+            use FieldKind::*;
+            match k { $(Key::$key => $kind),* }
+        }
+
+        fn needs_restart(k: Key) -> bool {
+            match k { $(Key::$key => $restart),* }
+        }
+
+        fn help(k: Key) -> &'static str {
+            match k { $(Key::$key => $help),* }
+        }
+    };
 }
 
-fn fields(section: Section) -> &'static [FieldMeta] {
-    match section {
-        Section::Server => &[
-            FieldMeta { label: "port", help: "HTTP port this ticker listens on (/, /scroll, /api/state).", kind: FieldKind::Num, restart: true },
-            FieldMeta { label: "bind_address", help: "Interface to bind. Use \"127.0.0.1\" to restrict to localhost only.", kind: FieldKind::Text, restart: true },
+define_fields! {
+    ServerPort => server.port, Num, true, "HTTP port this ticker listens on (/, /scroll, /api/state).";
+    BindAddress => server.bind_address, Text, true, "Interface to bind. Use \"127.0.0.1\" to restrict to localhost only.";
+    UpstreamUrl => ticker.upstream_url, Text, false, "kroak-time's /api/state endpoint to poll.";
+    PollIntervalMs => ticker.poll_interval_ms, Num, false, "How often to poll the upstream API, in milliseconds.";
+    SingerCount => ticker.singer_count, Num, false, "Local cap on how many upcoming singers /scroll shows, beyond NOW/NEXT. 0 = no override, use whatever kroak-time reports.";
+    ShowAllSingers => ticker.show_all_singers, Bool, false, "Ignore singer_count and kroak-time's reported cap; /scroll always shows every singer in the rotation.";
+    ShowEmptySingers => ticker.show_empty_singers, Bool, false, "Show singers with no song queued in the THEN list.";
+    EmptyNextText => ticker.empty_next_text, Text, false, "NEXT placeholder text shown when the rotation is empty.";
+    EmptyThenText => ticker.empty_then_text, List, false, "THEN placeholder entries shown when the rotation is empty — the call to action, e.g. \"Just fill out a slip\" or \"Scan the QR code\".";
+    ShowRequestButton => ticker.show_request_button, Bool, false, "Show the \"Request your song\" button at the top of the dashboard (/), linking to request_button_url.";
+    RequestButtonText => ticker.request_button_text, Text, false, "Text of the \"Request your song\" button.";
+    RequestButtonUrl => ticker.request_button_url, Text, false, "URL the \"Request your song\" button links to when phone requests are off.";
+    ShowTiktokLive => ticker.show_tiktok_live, Bool, false, "Show the \"Watch live on TikTok\" button beside the request button on the dashboard (/).";
+    TiktokButtonText => ticker.tiktok_button_text, Text, false, "Text of the \"Watch live on TikTok\" button.";
+    TiktokButtonUrl => ticker.tiktok_button_url, Text, false, "URL the \"Watch live on TikTok\" button links to.";
+    HeroNowLabel => ticker.hero_now_label, Text, false, "Label above the current singer's name on the dashboard (/).";
+    HeroNextLabel => ticker.hero_next_label, Text, false, "Label above the next singer's name on the dashboard (/).";
+    BadgeNowText => ticker.badge_now_text, Text, false, "Badge text marking the current singer's row in the dashboard table.";
+    BadgeNextText => ticker.badge_next_text, Text, false, "Badge text marking the next singer's row in the dashboard table.";
+    ShowSongProgress => ticker.show_song_progress, Bool, false, "Show elapsed / remaining time and a progress bar for the song on stage: under the current singer on the dashboard (/), and along the bottom of /scroll.";
+    QiShowAtStart => ticker.queue_info.show_at_start, Bool, false, "Show the singer-count/queue-time banner as soon as the ticker loads.";
+    QiEveryN => ticker.queue_info.show_every_n_singers, Num, false, "Re-show the singer-count/queue-time banner after this many singers take their turn. 0 disables the recurring banner.";
+    QiPrecise => ticker.queue_info.precise_duration, Bool, false, "On = precise duration (\"2 hours 1 minute\"). Off = friendly rounded duration (\"about an hour and a half\").";
+    QiCountLegend => ticker.queue_info.count_legend, Text, false, "Legend template for the singer count. {count} is replaced with the number.";
+    QiTimeLegend => ticker.queue_info.time_legend, Text, false, "Legend template for the queue time. {time} is replaced with the formatted duration.";
+    StEnabled => ticker.sing_time.enabled, Bool, false, "Master switch for showing estimated singing times anywhere on the ticker.";
+    StPerSinger => ticker.sing_time.show_per_singer, Bool, false, "Show each singer's own estimated time next to their name, everywhere they're listed.";
+    StInBanner => ticker.sing_time.show_in_banner, Bool, false, "Call out the time of whoever's up next right after each queue-info banner.";
+    StFormat => ticker.sing_time.format, Choice(&["relative", "clock"]), false, "\"relative\" = duration from now (\"15m\", \"1h20m\"). \"clock\" = absolute local time (\"21:42\").";
+    ScHeight => scroll.height, Num, false, "Banner height in pixels.";
+    ScBg => scroll.bg, Color, false, "Banner background — any CSS color value.";
+    ScFont => scroll.font, Text, false, "Font family.";
+    ScSize => scroll.size, Num, false, "Font size in pixels.";
+    ScSpeed => scroll.speed, Num, false, "Scroll speed in pixels per second.";
+    ScColorNow => scroll.color_now, Color, false, "\"NOW\" label color.";
+    ScColorNext => scroll.color_next, Color, false, "\"NEXT\" label color.";
+    ScColorUp => scroll.color_up, Color, false, "\"THEN\" label color.";
+    ScColorSinger => scroll.color_singer, Color, false, "Singer name color.";
+    ScColorSong => scroll.color_song, Color, false, "Song title color.";
+    ScColorArtist => scroll.color_artist, Color, false, "Song artist color.";
+    ScColorInfo => scroll.color_info, Color, false, "\"QUEUE\" label color (singer-count/queue-time banner).";
+    ScLabelNow => scroll.label_now, Text, false, "Text of the \"NOW\" label before the current singer.";
+    ScLabelNext => scroll.label_next, Text, false, "Text of the \"NEXT\" label before the next singer.";
+    ScLabelUp => scroll.label_up, Text, false, "Text of the \"THEN\" label before each upcoming-singers group.";
+    ScLabelInfo => scroll.label_info, Text, false, "Text of the \"QUEUE\" label on the singer-count/queue-time banner.";
+    ScColorProgress => scroll.color_progress, Color, false, "Song progress bar color, along the bottom of the banner.";
+    ScProgressHeight => scroll.progress_height, Num, false, "Song progress bar height in pixels. 0 hides it.";
+    NgEnabled => ngrok.enabled, Bool, true, "Share the ticker over the internet via an ngrok tunnel, in addition to serving it locally.";
+    NgAuthtoken => ngrok.authtoken, Secret, true, "ngrok authtoken. Leave blank to fall back to the NGROK_AUTHTOKEN environment variable.";
+    NgDomain => ngrok.domain, Text, true, "Reserved ngrok domain (e.g. \"my-ticker.ngrok-free.app\"). Leave blank for a random URL each run.";
+    RqEnabled => requests.enabled, Bool, true, "Turn the request button into an in-page song request form that sends requests to kroak-time. Off = the button links to request_button_url instead.";
+    RqCatalog => requests.catalog_path, Text, false, "Song catalog: .csv/.tsv/.txt with artist + title columns, .json, or kroak-time's catalog.redb. Blank = kroak-time's default catalog.redb.";
+    RqContract => requests.contract_path, Text, true, "kroak-time request-source definition describing the API served to kroak-time. Copy the same file into kroak-time's request-sources folder.";
+    RqMaxPending => requests.max_pending_per_device, Num, false, "Most waiting requests one phone can have at once. 0 = unlimited.";
+    RqComment => requests.comment_field, Bool, false, "Show an optional free-text \"Comment\" box on the request form. Sent to kroak-time via the contract's {comment} placeholder.";
+}
+
+// ── Tabs ────────────────────────────────────────────────────────────────────
+//
+// Tabs are grouped by how often a setting changes, not by config struct:
+// "Tonight" holds the per-gig switches, the rest is set-once setup.
+
+enum Row {
+    Group(&'static str),
+    /// A field, with an optional label that replaces its TOML name.
+    Field(Key, Option<&'static str>),
+}
+
+struct Tab {
+    title: &'static str,
+    applies: &'static str,
+    rows: &'static [Row],
+}
+
+use Row::{Field as F, Group as G};
+
+const TABS: [Tab; 4] = [
+    Tab {
+        title: "Tonight",
+        applies: "Things that change from gig to gig. Check this tab before doors open.",
+        rows: &[
+            G("Streaming & sharing"),
+            F(Key::ShowTiktokLive, Some("tiktok_button")),
+            F(Key::NgEnabled, Some("internet_access")),
+            G("Sign-up"),
+            F(Key::RqEnabled, Some("phone_requests")),
+            F(Key::EmptyThenText, Some("empty_queue_prompt")),
+            G("Queue display"),
+            F(Key::ShowAllSingers, None),
+            F(Key::SingerCount, None),
+            F(Key::QiEveryN, Some("queue_banner_every")),
+            F(Key::StEnabled, Some("sing_times")),
+            F(Key::StPerSinger, Some("per_singer_times")),
+            F(Key::StFormat, Some("time_format")),
+            F(Key::ShowSongProgress, Some("song_progress")),
         ],
-        Section::Ticker => &[
-            FieldMeta { label: "upstream_url", help: "kroak-time's /api/state endpoint to poll.", kind: FieldKind::Text, restart: false },
-            FieldMeta { label: "poll_interval_ms", help: "How often to poll the upstream API, in milliseconds.", kind: FieldKind::Num, restart: false },
-            FieldMeta { label: "singer_count", help: "Local cap on how many upcoming singers to show, beyond NOW/NEXT. 0 = no override, use whatever kroak-time reports.", kind: FieldKind::Num, restart: false },
-            FieldMeta { label: "show_all_singers", help: "Ignore singer_count above and kroak-time's reported cap; always show every singer in the rotation.", kind: FieldKind::Bool, restart: false },
-            FieldMeta { label: "show_empty_singers", help: "Show singers with no song queued in the THEN list.", kind: FieldKind::Bool, restart: false },
-            FieldMeta { label: "empty_next_text", help: "NEXT placeholder text shown when the rotation is empty.", kind: FieldKind::Text, restart: false },
-            FieldMeta { label: "empty_then_text", help: "THEN placeholder entries shown when the rotation is empty.", kind: FieldKind::List, restart: false },
-            FieldMeta { label: "show_request_button", help: "Show the \"Request your song\" button at the top of the dashboard (/).", kind: FieldKind::Bool, restart: false },
-            FieldMeta { label: "request_button_text", help: "Text of the \"Request your song\" button.", kind: FieldKind::Text, restart: false },
-            FieldMeta { label: "request_button_url", help: "URL the \"Request your song\" button links to.", kind: FieldKind::Text, restart: false },
-            FieldMeta { label: "show_tiktok_live", help: "Show the \"Watch live on TikTok\" button beside the request button.", kind: FieldKind::Bool, restart: false },
-            FieldMeta { label: "tiktok_button_text", help: "Text of the \"Watch live on TikTok\" button.", kind: FieldKind::Text, restart: false },
-            FieldMeta { label: "tiktok_button_url", help: "URL the \"Watch live on TikTok\" button links to.", kind: FieldKind::Text, restart: false },
-            FieldMeta { label: "hero_now_label", help: "Label above the current singer's name on the dashboard (/).", kind: FieldKind::Text, restart: false },
-            FieldMeta { label: "hero_next_label", help: "Label above the next singer's name on the dashboard (/).", kind: FieldKind::Text, restart: false },
-            FieldMeta { label: "badge_now_text", help: "Badge text marking the current singer's row in the dashboard table.", kind: FieldKind::Text, restart: false },
-            FieldMeta { label: "badge_next_text", help: "Badge text marking the next singer's row in the dashboard table.", kind: FieldKind::Text, restart: false },
-            FieldMeta { label: "show_song_progress", help: "Show elapsed / remaining time and a progress bar for the song on stage: under the current singer on the dashboard (/), and along the bottom of /scroll.", kind: FieldKind::Bool, restart: false },
+    },
+    Tab {
+        title: "Look",
+        applies: "Branding and wording. Set once.",
+        rows: &[
+            G("Dashboard (/)"),
+            F(Key::HeroNowLabel, None),
+            F(Key::HeroNextLabel, None),
+            F(Key::BadgeNowText, None),
+            F(Key::BadgeNextText, None),
+            F(Key::TiktokButtonText, None),
+            F(Key::TiktokButtonUrl, None),
+            G("Scroll (/scroll)"),
+            F(Key::ScSpeed, None),
+            F(Key::ScHeight, None),
+            F(Key::ScSize, None),
+            F(Key::ScFont, None),
+            F(Key::ScLabelNow, None),
+            F(Key::ScLabelNext, None),
+            F(Key::ScLabelUp, None),
+            F(Key::ScLabelInfo, None),
+            F(Key::ScProgressHeight, None),
+            G("Scroll colours"),
+            F(Key::ScBg, None),
+            F(Key::ScColorNow, None),
+            F(Key::ScColorNext, None),
+            F(Key::ScColorUp, None),
+            F(Key::ScColorSinger, None),
+            F(Key::ScColorSong, None),
+            F(Key::ScColorArtist, None),
+            F(Key::ScColorInfo, None),
+            F(Key::ScColorProgress, None),
+            G("Queue banner & wording"),
+            F(Key::ShowEmptySingers, None),
+            F(Key::EmptyNextText, None),
+            F(Key::QiShowAtStart, None),
+            F(Key::QiPrecise, None),
+            F(Key::QiCountLegend, None),
+            F(Key::QiTimeLegend, None),
+            F(Key::StInBanner, None),
         ],
-        Section::QueueInfo => &[
-            FieldMeta { label: "show_at_start", help: "Show the singer-count/queue-time banner as soon as the ticker loads.", kind: FieldKind::Bool, restart: false },
-            FieldMeta { label: "show_every_n_singers", help: "Re-show the banner after this many singers take their turn. 0 disables the recurring banner.", kind: FieldKind::Num, restart: false },
-            FieldMeta { label: "precise_duration", help: "On = precise duration (\"2 hours 1 minute\"). Off = friendly rounded duration (\"about an hour and a half\").", kind: FieldKind::Bool, restart: false },
-            FieldMeta { label: "count_legend", help: "Legend template for the singer count. {count} is replaced with the number.", kind: FieldKind::Text, restart: false },
-            FieldMeta { label: "time_legend", help: "Legend template for the queue time. {time} is replaced with the formatted duration.", kind: FieldKind::Text, restart: false },
+    },
+    Tab {
+        title: "Requests",
+        applies: "How phone requests work. Switched on and off from the Tonight tab.",
+        rows: &[
+            G("Button"),
+            F(Key::RequestButtonText, None),
+            F(Key::ShowRequestButton, None),
+            F(Key::RequestButtonUrl, None),
+            G("Form"),
+            F(Key::RqComment, None),
+            F(Key::RqMaxPending, None),
+            F(Key::RqCatalog, None),
+            F(Key::RqContract, None),
         ],
-        Section::SingTime => &[
-            FieldMeta { label: "enabled", help: "Master switch for showing estimated singing times anywhere on the ticker.", kind: FieldKind::Bool, restart: false },
-            FieldMeta { label: "show_per_singer", help: "Show each singer's own estimated time next to their name, everywhere they're listed.", kind: FieldKind::Bool, restart: false },
-            FieldMeta { label: "show_in_banner", help: "Call out the time of whoever's up next right after each queue-info banner.", kind: FieldKind::Bool, restart: false },
-            FieldMeta { label: "format", help: "\"relative\" = duration from now (\"15m\", \"1h20m\"). \"clock\" = absolute local time (\"21:42\").", kind: FieldKind::Choice(&["relative", "clock"]), restart: false },
+    },
+    Tab {
+        title: "Connection",
+        applies: "kroak-time, the local server and the ngrok tunnel. Set once.",
+        rows: &[
+            G("kroak-time"),
+            F(Key::UpstreamUrl, None),
+            F(Key::PollIntervalMs, None),
+            G("Local server"),
+            F(Key::ServerPort, None),
+            F(Key::BindAddress, None),
+            G("ngrok tunnel (switched on and off from Tonight)"),
+            F(Key::NgDomain, Some("ngrok_domain")),
+            F(Key::NgAuthtoken, Some("ngrok_authtoken")),
         ],
-        Section::Scroll => &[
-            FieldMeta { label: "height", help: "Banner height in pixels.", kind: FieldKind::Num, restart: false },
-            FieldMeta { label: "bg", help: "Banner background — any CSS color value.", kind: FieldKind::Text, restart: false },
-            FieldMeta { label: "font", help: "Font family.", kind: FieldKind::Text, restart: false },
-            FieldMeta { label: "size", help: "Font size in pixels.", kind: FieldKind::Num, restart: false },
-            FieldMeta { label: "speed", help: "Scroll speed in pixels per second.", kind: FieldKind::Num, restart: false },
-            FieldMeta { label: "color_now", help: "\"NOW\" label color.", kind: FieldKind::Text, restart: false },
-            FieldMeta { label: "color_next", help: "\"NEXT\" label color.", kind: FieldKind::Text, restart: false },
-            FieldMeta { label: "color_up", help: "\"THEN\" label color.", kind: FieldKind::Text, restart: false },
-            FieldMeta { label: "color_singer", help: "Singer name color.", kind: FieldKind::Text, restart: false },
-            FieldMeta { label: "color_song", help: "Song title color.", kind: FieldKind::Text, restart: false },
-            FieldMeta { label: "color_artist", help: "Song artist color.", kind: FieldKind::Text, restart: false },
-            FieldMeta { label: "color_info", help: "\"QUEUE\" label color (singer-count/queue-time banner).", kind: FieldKind::Text, restart: false },
-            FieldMeta { label: "label_now", help: "Text of the \"NOW\" label before the current singer.", kind: FieldKind::Text, restart: false },
-            FieldMeta { label: "label_next", help: "Text of the \"NEXT\" label before the next singer.", kind: FieldKind::Text, restart: false },
-            FieldMeta { label: "label_up", help: "Text of the \"THEN\" label before each upcoming-singers group.", kind: FieldKind::Text, restart: false },
-            FieldMeta { label: "label_info", help: "Text of the \"QUEUE\" label on the singer-count/queue-time banner.", kind: FieldKind::Text, restart: false },
-            FieldMeta { label: "color_progress", help: "Song progress bar color, along the bottom of the banner (needs show_song_progress).", kind: FieldKind::Text, restart: false },
-            FieldMeta { label: "progress_height", help: "Song progress bar height in pixels. 0 hides it.", kind: FieldKind::Num, restart: false },
-        ],
-        Section::Ngrok => &[
-            FieldMeta { label: "enabled", help: "Share the ticker over the internet via an ngrok tunnel, in addition to serving it locally.", kind: FieldKind::Bool, restart: true },
-            FieldMeta { label: "authtoken", help: "ngrok authtoken. Leave blank to fall back to the NGROK_AUTHTOKEN environment variable.", kind: FieldKind::Text, restart: true },
-            FieldMeta { label: "domain", help: "Reserved ngrok domain (e.g. \"my-ticker.ngrok-free.app\"). Leave blank for a random URL each run.", kind: FieldKind::Text, restart: true },
-        ],
-        Section::Requests => &[
-            FieldMeta { label: "enabled", help: "Turn the request button into an in-page song request form that sends requests to kroak-time.", kind: FieldKind::Bool, restart: true },
-            FieldMeta { label: "catalog_path", help: "Song catalog: .csv/.tsv/.txt with artist + title columns, .json, or kroak-time's catalog.redb. Blank = kroak-time's default catalog.redb.", kind: FieldKind::Text, restart: false },
-            FieldMeta { label: "contract_path", help: "kroak-time request-source definition describing the API served to kroak-time. Copy the same file into kroak-time's request-sources folder.", kind: FieldKind::Text, restart: true },
-            FieldMeta { label: "max_pending_per_device", help: "Most waiting requests one phone can have at once. 0 = unlimited.", kind: FieldKind::Num, restart: false },
-            FieldMeta { label: "comment_field", help: "Show an optional free-text \"Comment\" box on the request form. Sent to kroak-time via the contract's {comment} placeholder.", kind: FieldKind::Bool, restart: false },
-        ],
+    },
+];
+
+/// The field rows of a tab (group headings skipped), as (key, label).
+fn tab_fields(tab: &Tab) -> Vec<(Key, &'static str)> {
+    tab.rows
+        .iter()
+        .filter_map(|r| match r {
+            Row::Field(k, label) => Some((*k, label.unwrap_or_else(|| default_label(*k)))),
+            Row::Group(_) => None,
+        })
+        .collect()
+}
+
+fn default_label(k: Key) -> &'static str {
+    config_key(k).rsplit('.').next().unwrap_or("")
+}
+
+/// Why a field currently does nothing, given the other values — or `None`
+/// when it's in effect. Inactive fields are greyed out with this reason.
+fn inactive(cfg: &Config, k: Key) -> Option<&'static str> {
+    let t = &cfg.ticker;
+    let q = &t.queue_info;
+    let banner_never = !q.show_at_start && q.show_every_n_singers == 0;
+    use Key::*;
+    match k {
+        ShowRequestButton if cfg.requests.enabled => Some("always shown while phone requests are on"),
+        RequestButtonUrl if cfg.requests.enabled => Some("ignored while phone requests are on"),
+        RequestButtonText if !cfg.requests.enabled && !t.show_request_button => Some("button hidden"),
+        RqComment | RqMaxPending | RqCatalog | RqContract if !cfg.requests.enabled => Some("phone requests are off (Tonight)"),
+        TiktokButtonText | TiktokButtonUrl if !t.show_tiktok_live => Some("TikTok button is off (Tonight)"),
+        SingerCount if t.show_all_singers => Some("overridden by show_all_singers"),
+        ScColorProgress | ScProgressHeight if !t.show_song_progress => Some("song_progress is off (Tonight)"),
+        StPerSinger | StFormat if !t.sing_time.enabled => Some("sing times are off"),
+        StInBanner if !t.sing_time.enabled => Some("sing times are off (Tonight)"),
+        StInBanner | QiPrecise | QiCountLegend | QiTimeLegend if banner_never => Some("queue banner never shows"),
+        NgAuthtoken | NgDomain if !cfg.ngrok.enabled => Some("internet access is off (Tonight)"),
+        _ => None,
     }
 }
 
-fn field_count(section: Section) -> usize {
-    fields(section).len()
+/// Quick toggles available from any tab, also shown in the Status box.
+const QUICK_TOGGLES: [(char, Key, &str); 3] = [
+    ('t', Key::ShowTiktokLive, "TikTok"),
+    ('r', Key::RqEnabled, "Requests"),
+    ('n', Key::NgEnabled, "ngrok"),
+];
+
+fn bool_value(cfg: &Config, k: Key) -> bool {
+    field_ref(cfg, k).raw() == "true"
 }
 
-fn is_color_field(section: Section, idx: usize) -> bool {
-    section == Section::Scroll && matches!(idx, 1 | 5..=11 | 16)
-}
-
-fn value_str(cfg: &Config, section: Section, idx: usize) -> String {
-    use Section::*;
-    match (section, idx) {
-        (Server, 0) => cfg.server.port.to_string(),
-        (Server, 1) => cfg.server.bind_address.clone(),
-        (Ticker, 0) => cfg.ticker.upstream_url.clone(),
-        (Ticker, 1) => cfg.ticker.poll_interval_ms.to_string(),
-        (Ticker, 2) => cfg.ticker.singer_count.to_string(),
-        (Ticker, 3) => cfg.ticker.show_all_singers.to_string(),
-        (Ticker, 4) => cfg.ticker.show_empty_singers.to_string(),
-        (Ticker, 5) => cfg.ticker.empty_next_text.clone(),
-        (Ticker, 6) => cfg.ticker.empty_then_text.join("; "),
-        (Ticker, 7) => cfg.ticker.show_request_button.to_string(),
-        (Ticker, 8) => cfg.ticker.request_button_text.clone(),
-        (Ticker, 9) => cfg.ticker.request_button_url.clone(),
-        (Ticker, 10) => cfg.ticker.show_tiktok_live.to_string(),
-        (Ticker, 11) => cfg.ticker.tiktok_button_text.clone(),
-        (Ticker, 12) => cfg.ticker.tiktok_button_url.clone(),
-        (Ticker, 13) => cfg.ticker.hero_now_label.clone(),
-        (Ticker, 14) => cfg.ticker.hero_next_label.clone(),
-        (Ticker, 15) => cfg.ticker.badge_now_text.clone(),
-        (Ticker, 16) => cfg.ticker.badge_next_text.clone(),
-        (Ticker, 17) => cfg.ticker.show_song_progress.to_string(),
-        (QueueInfo, 0) => cfg.ticker.queue_info.show_at_start.to_string(),
-        (QueueInfo, 1) => cfg.ticker.queue_info.show_every_n_singers.to_string(),
-        (QueueInfo, 2) => cfg.ticker.queue_info.precise_duration.to_string(),
-        (QueueInfo, 3) => cfg.ticker.queue_info.count_legend.clone(),
-        (QueueInfo, 4) => cfg.ticker.queue_info.time_legend.clone(),
-        (SingTime, 0) => cfg.ticker.sing_time.enabled.to_string(),
-        (SingTime, 1) => cfg.ticker.sing_time.show_per_singer.to_string(),
-        (SingTime, 2) => cfg.ticker.sing_time.show_in_banner.to_string(),
-        (SingTime, 3) => cfg.ticker.sing_time.format.clone(),
-        (Scroll, 0) => cfg.scroll.height.to_string(),
-        (Scroll, 1) => cfg.scroll.bg.clone(),
-        (Scroll, 2) => cfg.scroll.font.clone(),
-        (Scroll, 3) => cfg.scroll.size.to_string(),
-        (Scroll, 4) => cfg.scroll.speed.to_string(),
-        (Scroll, 5) => cfg.scroll.color_now.clone(),
-        (Scroll, 6) => cfg.scroll.color_next.clone(),
-        (Scroll, 7) => cfg.scroll.color_up.clone(),
-        (Scroll, 8) => cfg.scroll.color_singer.clone(),
-        (Scroll, 9) => cfg.scroll.color_song.clone(),
-        (Scroll, 10) => cfg.scroll.color_artist.clone(),
-        (Scroll, 11) => cfg.scroll.color_info.clone(),
-        (Scroll, 12) => cfg.scroll.label_now.clone(),
-        (Scroll, 13) => cfg.scroll.label_next.clone(),
-        (Scroll, 14) => cfg.scroll.label_up.clone(),
-        (Scroll, 15) => cfg.scroll.label_info.clone(),
-        (Scroll, 16) => cfg.scroll.color_progress.clone(),
-        (Scroll, 17) => cfg.scroll.progress_height.to_string(),
-        (Ngrok, 0) => cfg.ngrok.enabled.to_string(),
-        (Ngrok, 1) => cfg.ngrok.authtoken.clone(),
-        (Ngrok, 2) => cfg.ngrok.domain.clone(),
-        (Requests, 0) => cfg.requests.enabled.to_string(),
-        (Requests, 1) => cfg.requests.catalog_path.clone(),
-        (Requests, 2) => cfg.requests.contract_path.clone(),
-        (Requests, 3) => cfg.requests.max_pending_per_device.to_string(),
-        (Requests, 4) => cfg.requests.comment_field.to_string(),
-        _ => String::new(),
-    }
-}
-
-fn display_value(cfg: &Config, section: Section, idx: usize) -> String {
-    match fields(section)[idx].kind {
-        FieldKind::Bool => {
-            if value_str(cfg, section, idx) == "true" { "On".into() } else { "Off".into() }
-        }
-        FieldKind::List => {
-            let n = list_ref(cfg, section, idx).map(|l| l.len()).unwrap_or(0);
-            format!("{n} entries")
-        }
-        _ if section == Section::Ngrok && idx == 1 => {
-            let v = value_str(cfg, section, idx);
-            if v.is_empty() {
+fn display_value(cfg: &Config, k: Key) -> String {
+    let v = field_ref(cfg, k);
+    match kind(k) {
+        FieldKind::Bool => if v.raw() == "true" { "On" } else { "Off" }.to_string(),
+        FieldKind::List => format!("{} entries", v.as_list().map(|l| l.len()).unwrap_or(0)),
+        FieldKind::Secret => {
+            let s = v.raw();
+            if s.is_empty() {
                 "(unset — using NGROK_AUTHTOKEN env var)".to_string()
             } else {
-                "•".repeat(v.chars().count().min(24))
+                "•".repeat(s.chars().count().min(24))
             }
         }
-        _ => value_str(cfg, section, idx),
+        _ => v.raw(),
     }
 }
 
-fn set_text(cfg: &mut Config, section: Section, idx: usize, text: &str) -> std::result::Result<(), String> {
-    use Section::*;
-    match (section, idx) {
-        (Server, 0) => cfg.server.port = parse_num(text)?,
-        (Server, 1) => cfg.server.bind_address = text.to_string(),
-        (Ticker, 0) => cfg.ticker.upstream_url = text.to_string(),
-        (Ticker, 1) => cfg.ticker.poll_interval_ms = parse_num(text)?,
-        (Ticker, 2) => cfg.ticker.singer_count = parse_num(text)?,
-        (Ticker, 5) => cfg.ticker.empty_next_text = text.to_string(),
-        (Ticker, 8) => cfg.ticker.request_button_text = text.to_string(),
-        (Ticker, 9) => cfg.ticker.request_button_url = text.to_string(),
-        (Ticker, 11) => cfg.ticker.tiktok_button_text = text.to_string(),
-        (Ticker, 12) => cfg.ticker.tiktok_button_url = text.to_string(),
-        (Ticker, 13) => cfg.ticker.hero_now_label = text.to_string(),
-        (Ticker, 14) => cfg.ticker.hero_next_label = text.to_string(),
-        (Ticker, 15) => cfg.ticker.badge_now_text = text.to_string(),
-        (Ticker, 16) => cfg.ticker.badge_next_text = text.to_string(),
-        (QueueInfo, 1) => cfg.ticker.queue_info.show_every_n_singers = parse_num(text)?,
-        (QueueInfo, 3) => cfg.ticker.queue_info.count_legend = text.to_string(),
-        (QueueInfo, 4) => cfg.ticker.queue_info.time_legend = text.to_string(),
-        (Scroll, 0) => cfg.scroll.height = parse_num(text)?,
-        (Scroll, 1) => cfg.scroll.bg = text.to_string(),
-        (Scroll, 2) => cfg.scroll.font = text.to_string(),
-        (Scroll, 3) => cfg.scroll.size = parse_num(text)?,
-        (Scroll, 4) => cfg.scroll.speed = parse_num(text)?,
-        (Scroll, 5) => cfg.scroll.color_now = text.to_string(),
-        (Scroll, 6) => cfg.scroll.color_next = text.to_string(),
-        (Scroll, 7) => cfg.scroll.color_up = text.to_string(),
-        (Scroll, 8) => cfg.scroll.color_singer = text.to_string(),
-        (Scroll, 9) => cfg.scroll.color_song = text.to_string(),
-        (Scroll, 10) => cfg.scroll.color_artist = text.to_string(),
-        (Scroll, 11) => cfg.scroll.color_info = text.to_string(),
-        (Scroll, 12) => cfg.scroll.label_now = text.to_string(),
-        (Scroll, 13) => cfg.scroll.label_next = text.to_string(),
-        (Scroll, 14) => cfg.scroll.label_up = text.to_string(),
-        (Scroll, 15) => cfg.scroll.label_info = text.to_string(),
-        (Scroll, 16) => cfg.scroll.color_progress = text.to_string(),
-        (Scroll, 17) => cfg.scroll.progress_height = parse_num(text)?,
-        (Ngrok, 1) => cfg.ngrok.authtoken = text.to_string(),
-        (Ngrok, 2) => cfg.ngrok.domain = text.to_string(),
-        (Requests, 1) => cfg.requests.catalog_path = text.to_string(),
-        (Requests, 2) => cfg.requests.contract_path = text.to_string(),
-        (Requests, 3) => cfg.requests.max_pending_per_device = parse_num(text)?,
-        _ => return Err("not a text field".to_string()),
-    }
-    Ok(())
-}
-
-fn parse_num<T: std::str::FromStr>(text: &str) -> std::result::Result<T, String> {
-    text.trim().parse().map_err(|_| format!("\"{text}\" is not a valid number"))
-}
-
-fn toggle_bool(cfg: &mut Config, section: Section, idx: usize) {
-    use Section::*;
-    match (section, idx) {
-        (Ticker, 3) => cfg.ticker.show_all_singers = !cfg.ticker.show_all_singers,
-        (Ticker, 4) => cfg.ticker.show_empty_singers = !cfg.ticker.show_empty_singers,
-        (Ticker, 7) => cfg.ticker.show_request_button = !cfg.ticker.show_request_button,
-        (Ticker, 10) => cfg.ticker.show_tiktok_live = !cfg.ticker.show_tiktok_live,
-        (Ticker, 17) => cfg.ticker.show_song_progress = !cfg.ticker.show_song_progress,
-        (QueueInfo, 0) => cfg.ticker.queue_info.show_at_start = !cfg.ticker.queue_info.show_at_start,
-        (QueueInfo, 2) => cfg.ticker.queue_info.precise_duration = !cfg.ticker.queue_info.precise_duration,
-        (SingTime, 0) => cfg.ticker.sing_time.enabled = !cfg.ticker.sing_time.enabled,
-        (SingTime, 1) => cfg.ticker.sing_time.show_per_singer = !cfg.ticker.sing_time.show_per_singer,
-        (SingTime, 2) => cfg.ticker.sing_time.show_in_banner = !cfg.ticker.sing_time.show_in_banner,
-        (Ngrok, 0) => cfg.ngrok.enabled = !cfg.ngrok.enabled,
-        (Requests, 0) => cfg.requests.enabled = !cfg.requests.enabled,
-        (Requests, 4) => cfg.requests.comment_field = !cfg.requests.comment_field,
-        _ => {}
-    }
-}
-
-fn cycle_choice(cfg: &mut Config, section: Section, idx: usize, choices: &[&str], forward: bool) {
-    if let (Section::SingTime, 3) = (section, idx) {
-        let pos = choices.iter().position(|c| *c == cfg.ticker.sing_time.format).unwrap_or(0);
-        let len = choices.len();
-        let next = if forward { (pos + 1) % len } else { (pos + len - 1) % len };
-        cfg.ticker.sing_time.format = choices[next].to_string();
-    }
-}
-
-fn list_ref(cfg: &Config, section: Section, idx: usize) -> Option<&Vec<String>> {
-    match (section, idx) {
-        (Section::Ticker, 6) => Some(&cfg.ticker.empty_then_text),
-        _ => None,
-    }
-}
-
-fn list_mut(cfg: &mut Config, section: Section, idx: usize) -> Option<&mut Vec<String>> {
-    match (section, idx) {
-        (Section::Ticker, 6) => Some(&mut cfg.ticker.empty_then_text),
-        _ => None,
-    }
+fn cycle_choice(cfg: &mut Config, k: Key, choices: &[&str], forward: bool) {
+    let field = field_mut(cfg, k);
+    let cur = field.raw();
+    let pos = choices.iter().position(|c| *c == cur).unwrap_or(0);
+    let len = choices.len();
+    let next = if forward { (pos + 1) % len } else { (pos + len - 1) % len };
+    let _ = field.set_text(choices[next]);
 }
 
 fn parse_css_color(s: &str) -> Option<Color> {
@@ -369,11 +417,19 @@ enum Mode {
 struct App {
     draft: Config,
     dirty: bool,
-    section_idx: usize,
-    cursor: [usize; SECTIONS.len()],
+    tab_idx: usize,
+    cursor: [usize; TABS.len()],
     mode: Mode,
     status: String,
     startup_info: Option<StartupInfo>,
+}
+
+impl App {
+    /// The selected field on the current tab, as (key, label).
+    fn selected(&self) -> (Key, &'static str) {
+        let fields = tab_fields(&TABS[self.tab_idx]);
+        fields[self.cursor[self.tab_idx].min(fields.len() - 1)]
+    }
 }
 
 /// Restores the terminal on drop, so a panic or early return never leaves
@@ -409,8 +465,8 @@ pub fn run(
     let mut app = App {
         draft: initial,
         dirty: false,
-        section_idx: 0,
-        cursor: [0; SECTIONS.len()],
+        tab_idx: 0,
+        cursor: [0; TABS.len()],
         mode: Mode::Normal,
         status: "Loaded.".to_string(),
         startup_info: None,
@@ -456,6 +512,16 @@ fn handle_key(app: &mut App, key: KeyEvent, shared_cfg: &SharedConfig, config_pa
     Ok(quit)
 }
 
+/// The list field being edited in the list popup (the selected field).
+fn selected_list(app: &App) -> Option<&Vec<String>> {
+    field_ref(&app.draft, app.selected().0).as_list()
+}
+
+fn selected_list_mut(app: &mut App) -> Option<&mut Vec<String>> {
+    let k = app.selected().0;
+    field_mut(&mut app.draft, k).as_list_mut()
+}
+
 fn step(
     app: &mut App,
     key: KeyEvent,
@@ -483,12 +549,11 @@ fn step(
                 Ok((Mode::Normal, false))
             }
             KeyCode::Enter => {
-                let section = SECTIONS[app.section_idx];
-                let idx = app.cursor[app.section_idx];
-                match set_text(&mut app.draft, section, idx, &buffer) {
+                let (k, label) = app.selected();
+                match field_mut(&mut app.draft, k).set_text(&buffer) {
                     Ok(()) => {
                         app.dirty = true;
-                        app.status = format!("Set {} (unsaved).", fields(section)[idx].label);
+                        app.status = format!("Set {label} (unsaved).");
                         Ok((Mode::Normal, false))
                     }
                     Err(e) => {
@@ -509,7 +574,7 @@ fn step(
         },
 
         Mode::ListView { cursor } => {
-            let len = list_ref(&app.draft, Section::Ticker, 6).map(|l| l.len()).unwrap_or(0);
+            let len = selected_list(app).map(|l| l.len()).unwrap_or(0);
             match key.code {
                 KeyCode::Esc | KeyCode::Char('q') => Ok((Mode::Normal, false)),
                 KeyCode::Up | KeyCode::Char('k') => Ok((Mode::ListView { cursor: cursor.saturating_sub(1) }, false)),
@@ -518,15 +583,12 @@ fn step(
                     Ok((Mode::ListView { cursor: next }, false))
                 }
                 KeyCode::Enter if len > 0 => {
-                    let buf = list_ref(&app.draft, Section::Ticker, 6)
-                        .and_then(|l| l.get(cursor))
-                        .cloned()
-                        .unwrap_or_default();
+                    let buf = selected_list(app).and_then(|l| l.get(cursor)).cloned().unwrap_or_default();
                     Ok((Mode::ListEditing { cursor, buffer: buf, is_new: false }, false))
                 }
                 KeyCode::Char('a') => Ok((Mode::ListEditing { cursor: len, buffer: String::new(), is_new: true }, false)),
                 KeyCode::Char('d') if len > 0 => {
-                    if let Some(l) = list_mut(&mut app.draft, Section::Ticker, 6) {
+                    if let Some(l) = selected_list_mut(app) {
                         l.remove(cursor);
                     }
                     app.dirty = true;
@@ -541,12 +603,12 @@ fn step(
 
         Mode::ListEditing { cursor, mut buffer, is_new } => match key.code {
             KeyCode::Esc => {
-                let len = list_ref(&app.draft, Section::Ticker, 6).map(|l| l.len()).unwrap_or(0);
+                let len = selected_list(app).map(|l| l.len()).unwrap_or(0);
                 let clamped = if len == 0 { 0 } else { cursor.min(len - 1) };
                 Ok((Mode::ListView { cursor: clamped }, false))
             }
             KeyCode::Enter => {
-                let new_len = if let Some(l) = list_mut(&mut app.draft, Section::Ticker, 6) {
+                let new_len = if let Some(l) = selected_list_mut(app) {
                     if is_new {
                         l.push(buffer.clone());
                     } else if let Some(slot) = l.get_mut(cursor) {
@@ -577,48 +639,56 @@ fn step(
         },
 
         Mode::Normal => {
-            let section = SECTIONS[app.section_idx];
-            let count = field_count(section);
+            let count = tab_fields(&TABS[app.tab_idx]).len();
             match key.code {
                 KeyCode::Char('q') => Ok(request_quit(app)),
                 KeyCode::Tab | KeyCode::Right => {
-                    app.section_idx = (app.section_idx + 1) % SECTIONS.len();
+                    app.tab_idx = (app.tab_idx + 1) % TABS.len();
                     Ok((Mode::Normal, false))
                 }
                 KeyCode::BackTab | KeyCode::Left => {
-                    app.section_idx = (app.section_idx + SECTIONS.len() - 1) % SECTIONS.len();
+                    app.tab_idx = (app.tab_idx + TABS.len() - 1) % TABS.len();
                     Ok((Mode::Normal, false))
                 }
                 KeyCode::Up | KeyCode::Char('k') => {
-                    if app.cursor[app.section_idx] > 0 {
-                        app.cursor[app.section_idx] -= 1;
+                    if app.cursor[app.tab_idx] > 0 {
+                        app.cursor[app.tab_idx] -= 1;
                     }
                     Ok((Mode::Normal, false))
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
-                    if app.cursor[app.section_idx] + 1 < count {
-                        app.cursor[app.section_idx] += 1;
+                    if app.cursor[app.tab_idx] + 1 < count {
+                        app.cursor[app.tab_idx] += 1;
                     }
                     Ok((Mode::Normal, false))
                 }
+                KeyCode::Char(c) if QUICK_TOGGLES.iter().any(|(qc, _, _)| *qc == c) => {
+                    let (_, k, name) = *QUICK_TOGGLES.iter().find(|(qc, _, _)| *qc == c).unwrap();
+                    field_mut(&mut app.draft, k).toggle();
+                    app.dirty = true;
+                    let state = if bool_value(&app.draft, k) { "On" } else { "Off" };
+                    let restart = if needs_restart(k) { ", takes effect after a restart" } else { "" };
+                    app.status = format!("{name} → {state} (unsaved{restart}).");
+                    Ok((Mode::Normal, false))
+                }
                 KeyCode::Enter | KeyCode::Char(' ') => {
-                    let idx = app.cursor[app.section_idx];
-                    match fields(section)[idx].kind {
+                    let (k, _) = app.selected();
+                    match kind(k) {
                         FieldKind::Bool => {
-                            toggle_bool(&mut app.draft, section, idx);
+                            field_mut(&mut app.draft, k).toggle();
                             app.dirty = true;
                             app.status = "Toggled (unsaved).".into();
                             Ok((Mode::Normal, false))
                         }
                         FieldKind::Choice(choices) => {
-                            cycle_choice(&mut app.draft, section, idx, choices, true);
+                            cycle_choice(&mut app.draft, k, choices, true);
                             app.dirty = true;
                             app.status = "Changed (unsaved).".into();
                             Ok((Mode::Normal, false))
                         }
                         FieldKind::List => Ok((Mode::ListView { cursor: 0 }, false)),
-                        FieldKind::Text | FieldKind::Num => {
-                            let seed = value_str(&app.draft, section, idx);
+                        FieldKind::Text | FieldKind::Num | FieldKind::Color | FieldKind::Secret => {
+                            let seed = field_ref(&app.draft, k).raw();
                             Ok((Mode::Editing { buffer: seed, error: None }, false))
                         }
                     }
@@ -660,7 +730,7 @@ fn draw(f: &mut Frame, app: &App) {
     let area = f.area();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(5), Constraint::Length(8), Constraint::Length(2)])
+        .constraints([Constraint::Length(3), Constraint::Min(5), Constraint::Length(9), Constraint::Length(2)])
         .split(area);
 
     draw_tabs(f, chunks[0], app);
@@ -679,28 +749,47 @@ fn draw(f: &mut Frame, app: &App) {
     }
 }
 
+/// "[t] TikTok On   [r] Requests Off   [n] ngrok On" — the per-gig switches,
+/// as currently set in the draft.
+fn quick_toggle_line(app: &App) -> Line<'static> {
+    let gray = Style::default().fg(Color::Gray);
+    let mut spans = vec![Span::styled(format!("{:<11}", "Tonight"), Style::default().fg(Color::Yellow))];
+    for (i, (c, k, name)) in QUICK_TOGGLES.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw("   "));
+        }
+        let on = bool_value(&app.draft, *k);
+        spans.push(Span::styled(format!("[{c}] "), gray));
+        spans.push(Span::raw(format!("{name} ")));
+        spans.push(Span::styled(
+            if on { "On " } else { "Off" },
+            Style::default().fg(if on { Color::Green } else { Color::DarkGray }),
+        ));
+    }
+    Line::from(spans)
+}
+
 fn draw_status(f: &mut Frame, area: Rect, app: &App) {
-    let lines: Vec<Line> = match &app.startup_info {
-        None => vec![Line::from(Span::styled("Starting server…", Style::default().fg(Color::Gray)))],
+    let mut lines = vec![quick_toggle_line(app)];
+    match &app.startup_info {
+        None => lines.push(Line::from(Span::styled("Starting server…", Style::default().fg(Color::Gray)))),
         Some(info) => {
             let label = |s: &'static str| Span::styled(format!("{s:<11}"), Style::default().fg(Color::Gray));
 
-            let mut lines = vec![
-                Line::from(vec![
-                    label("Dashboard"),
-                    Span::raw(info.local_dashboard_url.clone()),
-                    Span::raw("    "),
-                    Span::styled("Scroll  ", Style::default().fg(Color::Gray)),
-                    Span::raw(info.local_scroll_url.clone()),
-                ]),
-                Line::from(vec![
-                    label("LAN"),
-                    Span::raw(info.lan_dashboard_url.clone()),
-                    Span::raw("    "),
-                    Span::styled("Scroll  ", Style::default().fg(Color::Gray)),
-                    Span::raw(info.lan_scroll_url.clone()),
-                ]),
-            ];
+            lines.push(Line::from(vec![
+                label("Dashboard"),
+                Span::raw(info.local_dashboard_url.clone()),
+                Span::raw("    "),
+                Span::styled("Scroll  ", Style::default().fg(Color::Gray)),
+                Span::raw(info.local_scroll_url.clone()),
+            ]));
+            lines.push(Line::from(vec![
+                label("LAN"),
+                Span::raw(info.lan_dashboard_url.clone()),
+                Span::raw("    "),
+                Span::styled("Scroll  ", Style::default().fg(Color::Gray)),
+                Span::raw(info.lan_scroll_url.clone()),
+            ]));
 
             let ngrok_line = if let Some(url) = &info.ngrok_dashboard_url {
                 let ok = Style::default().fg(Color::Green);
@@ -736,19 +825,17 @@ fn draw_status(f: &mut Frame, area: Rect, app: &App) {
             });
 
             lines.push(Line::from(vec![label("Data"), Span::raw(crate::paths::data_dir().display().to_string())]));
-
-            lines
         }
-    };
+    }
 
     let block = Block::default().borders(Borders::ALL).title("Status");
     f.render_widget(Paragraph::new(lines).block(block).wrap(Wrap { trim: true }), area);
 }
 
 fn draw_tabs(f: &mut Frame, area: Rect, app: &App) {
-    let titles: Vec<Line> = SECTIONS.iter().map(|s| Line::from(s.title())).collect();
+    let titles: Vec<Line> = TABS.iter().map(|t| Line::from(t.title)).collect();
     let tabs = Tabs::new(titles)
-        .select(app.section_idx)
+        .select(app.tab_idx)
         .block(Block::default().borders(Borders::ALL).title("kroak-time-ticker config"))
         .highlight_style(Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD));
     f.render_widget(tabs, area);
@@ -760,39 +847,78 @@ fn draw_body(f: &mut Frame, area: Rect, app: &App) {
         .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
         .split(area);
 
-    let section = SECTIONS[app.section_idx];
-    let cursor = app.cursor[app.section_idx];
-    let metas = fields(section);
+    let tab = &TABS[app.tab_idx];
+    let cursor = app.cursor[app.tab_idx];
+    let dim = Style::default().fg(Color::DarkGray);
 
-    let items: Vec<ListItem> = metas
-        .iter()
-        .enumerate()
-        .map(|(i, m)| {
-            let selected = i == cursor;
-            let label_style = if selected {
-                Style::default().add_modifier(Modifier::BOLD).fg(Color::Yellow)
-            } else {
-                Style::default()
-            };
-            let label = format!("{}{}", m.label, if m.restart { " *" } else { "" });
-            let mut spans = vec![Span::styled(format!("{label:<24}"), label_style)];
-
-            if is_color_field(section, i) {
-                if let Some(c) = parse_css_color(&value_str(&app.draft, section, i)) {
-                    spans.push(Span::styled("■ ", Style::default().fg(c)));
-                }
+    let mut items: Vec<ListItem> = Vec::new();
+    let mut selected_row = 0;
+    let mut field_idx = 0;
+    for row in tab.rows {
+        match row {
+            Row::Group(title) => {
+                let rule = "─".repeat(40usize.saturating_sub(title.chars().count()).max(2));
+                items.push(ListItem::new(Line::from(Span::styled(
+                    format!("── {title} {rule}"),
+                    Style::default().fg(Color::Cyan),
+                ))));
             }
-            spans.push(Span::raw(display_value(&app.draft, section, i)));
-            ListItem::new(Line::from(spans))
-        })
-        .collect();
+            Row::Field(k, label) => {
+                let k = *k;
+                let selected = field_idx == cursor;
+                if selected {
+                    selected_row = items.len();
+                }
+                field_idx += 1;
 
-    let list = List::new(items).block(Block::default().borders(Borders::ALL).title(section.title()));
-    f.render_widget(list, cols[0]);
+                let why = inactive(&app.draft, k);
+                let label_style = match (selected, why.is_some()) {
+                    (true, _) => Style::default().add_modifier(Modifier::BOLD).fg(Color::Yellow),
+                    (false, true) => dim,
+                    (false, false) => Style::default(),
+                };
+                let label = format!("{}{}", label.unwrap_or_else(|| default_label(k)), if needs_restart(k) { " *" } else { "" });
+                let mut spans = vec![Span::styled(format!("{label:<24}"), label_style)];
 
-    let meta = &metas[cursor];
-    let restart_note = if meta.restart { "\n\n* takes effect after a restart of kroak-time-ticker." } else { "" };
-    let help = Paragraph::new(format!("{}{restart_note}", meta.help))
+                if kind(k) == FieldKind::Color {
+                    if let Some(c) = parse_css_color(&field_ref(&app.draft, k).raw()) {
+                        spans.push(Span::styled("■ ", Style::default().fg(c)));
+                    }
+                }
+                let value_style = if why.is_some() { dim } else { Style::default() };
+                spans.push(Span::styled(display_value(&app.draft, k), value_style));
+                if let Some(why) = why {
+                    spans.push(Span::styled(format!("  — {why}"), dim.add_modifier(Modifier::ITALIC)));
+                }
+                items.push(ListItem::new(Line::from(spans)));
+            }
+        }
+    }
+
+    // A stateful list scrolls to keep the selection visible on tabs taller
+    // than the terminal (Look has ~35 rows).
+    let mut state = ListState::default().with_selected(Some(selected_row));
+    let list = List::new(items).block(Block::default().borders(Borders::ALL).title(tab.title));
+    f.render_stateful_widget(list, cols[0], &mut state);
+
+    let (k, _) = app.selected();
+    let gray = Style::default().fg(Color::Gray);
+    let mut lines = vec![
+        Line::from(Span::styled(tab.applies, Style::default().fg(Color::Cyan))),
+        Line::from(""),
+        Line::from(help(k)),
+        Line::from(""),
+        Line::from(Span::styled(format!("config key: {}", config_key(k)), gray)),
+    ];
+    if let Some(why) = inactive(&app.draft, k) {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(format!("Inactive: {why}."), Style::default().fg(Color::Yellow))));
+    }
+    if needs_restart(k) {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled("* takes effect after a restart of kroak-time-ticker.", gray)));
+    }
+    let help = Paragraph::new(lines)
         .wrap(Wrap { trim: true })
         .block(Block::default().borders(Borders::ALL).title("About this setting"));
     f.render_widget(help, cols[1]);
@@ -801,7 +927,7 @@ fn draw_body(f: &mut Frame, area: Rect, app: &App) {
 fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
     let dirty_tag = if app.dirty { " [UNSAVED]" } else { "" };
     let text = format!(
-        "{}{}\n←/→ tab  ↑/↓ field  Enter edit/toggle  s save  q quit",
+        "{}{}\n←/→ tab  ↑/↓ field  Enter edit/toggle  t/r/n quick toggles  s save  q quit",
         app.status, dirty_tag
     );
     f.render_widget(Paragraph::new(text), area);
@@ -844,10 +970,8 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 }
 
 fn draw_edit_popup(f: &mut Frame, area: Rect, app: &App, buffer: &str, error: Option<&str>) {
-    let section = SECTIONS[app.section_idx];
-    let idx = app.cursor[app.section_idx];
-    let label = fields(section)[idx].label;
-    let mask = section == Section::Ngrok && idx == 1;
+    let (k, label) = app.selected();
+    let mask = kind(k) == FieldKind::Secret;
     let shown = if mask { "•".repeat(buffer.chars().count()) } else { buffer.to_string() };
 
     let popup = centered_rect(60, 25, area);
@@ -863,7 +987,8 @@ fn draw_edit_popup(f: &mut Frame, area: Rect, app: &App, buffer: &str, error: Op
 }
 
 fn draw_list_popup(f: &mut Frame, area: Rect, app: &App, cursor: usize, editing: Option<(&str, bool)>) {
-    let list = list_ref(&app.draft, Section::Ticker, 6).cloned().unwrap_or_default();
+    let list = selected_list(app).cloned().unwrap_or_default();
+    let (_, label) = app.selected();
 
     // Size the popup to its actual content (entries + borders + the edit box
     // when open) instead of a fixed percentage of the screen. A fixed 60%
@@ -897,7 +1022,7 @@ fn draw_list_popup(f: &mut Frame, area: Rect, app: &App, cursor: usize, editing:
         })
         .collect();
 
-    let title = "empty_then_text — ↑/↓ select · Enter edit · a add · d delete · Esc back";
+    let title = format!("{label} — ↑/↓ select · Enter edit · a add · d delete · Esc back");
     f.render_widget(List::new(items).block(Block::default().borders(Borders::ALL).title(title)), rows[0]);
 
     if let Some((buf, is_new)) = editing {
@@ -917,4 +1042,51 @@ fn draw_confirm_popup(f: &mut Frame, area: Rect) {
     let block = Block::default().borders(Borders::ALL).title("Quit without saving?");
     let text = Paragraph::new("You have unsaved changes.\n\ny = quit anyway   any other key = cancel").block(block);
     f.render_widget(text, popup);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_keys_are_dotted_paths() {
+        assert_eq!(config_key(Key::QiShowAtStart), "ticker.queue_info.show_at_start");
+        assert_eq!(config_key(Key::ServerPort), "server.port");
+        assert_eq!(default_label(Key::RqMaxPending), "max_pending_per_device");
+    }
+
+    #[test]
+    fn every_field_is_on_exactly_one_tab() {
+        let mut seen: Vec<Key> = TABS.iter().flat_map(|t| tab_fields(t).into_iter().map(|(k, _)| k)).collect();
+        let total = seen.len();
+        seen.sort_by_key(|k| *k as usize);
+        seen.dedup();
+        assert_eq!(seen.len(), total, "a field appears on two tabs");
+        assert_eq!(total, Key::RqComment as usize + 1, "a field is missing from the tabs");
+    }
+
+    #[test]
+    fn request_button_fields_grey_out_while_form_is_on() {
+        let mut cfg: Config = toml::from_str("").unwrap();
+        cfg.requests.enabled = true;
+        assert!(inactive(&cfg, Key::RequestButtonUrl).is_some());
+        assert!(inactive(&cfg, Key::RqCatalog).is_none());
+        cfg.requests.enabled = false;
+        assert!(inactive(&cfg, Key::RequestButtonUrl).is_none());
+        assert!(inactive(&cfg, Key::RqCatalog).is_some());
+    }
+
+    #[test]
+    fn edit_and_toggle_through_keys() {
+        let mut cfg: Config = toml::from_str("").unwrap();
+        field_mut(&mut cfg, Key::ServerPort).set_text("9090").unwrap();
+        assert_eq!(cfg.server.port, 9090);
+        assert!(field_mut(&mut cfg, Key::ServerPort).set_text("x").is_err());
+        let before = cfg.ngrok.enabled;
+        field_mut(&mut cfg, Key::NgEnabled).toggle();
+        assert_eq!(cfg.ngrok.enabled, !before);
+        cfg.ticker.sing_time.format = "relative".into();
+        cycle_choice(&mut cfg, Key::StFormat, &["relative", "clock"], true);
+        assert_eq!(cfg.ticker.sing_time.format, "clock");
+    }
 }
