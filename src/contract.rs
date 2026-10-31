@@ -486,6 +486,7 @@ mod tests {
                     comment: comment.into(),
                 },
                 0,
+                0,
             )
             .unwrap()
     }

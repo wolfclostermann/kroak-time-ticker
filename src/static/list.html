@@ -1182,10 +1182,11 @@
           }),
         });
         const res = await r.json().catch(() => ({}));
-        if (!r.ok || !res.ok) throw new Error(res.error || 'Something went wrong — please try again.');
+        // A repeat of a song that already got through: reassure, don't alarm.
+        if (!res.duplicate && (!r.ok || !res.ok)) throw new Error(res.error || 'Something went wrong — please try again.');
 
         save(NAME_KEY, singer);
-        showMsg(`Sent! “${title}” for ${singer}. Want to request another?`, 'ok');
+        showMsg(res.duplicate ? res.error : `Sent! “${title}” for ${singer}. Want to request another?`, 'ok');
         artistEl.value = titleEl.value = commentEl.value = '';
         keyEl.value = '0';
         selArtist = selSong = null;
