@@ -397,6 +397,59 @@
   .req-msg.ok  { color: var(--accent); font-weight: 600; }
   .req-msg.err { color: #e6a23c; }
 
+  /* ── "Your requests": this phone's requests tonight, where each has got to,
+     and any message from the host ───────────────────────────────────────── */
+  .my-reqs {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 20px;
+    margin: -8px 0 24px;
+  }
+  .my-reqs[hidden] { display: none; }
+  .my-reqs-head {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .my-reqs ul { list-style: none; }
+  .my-reqs li { padding: 8px 0; border-top: 1px solid var(--border); }
+  .my-reqs li:first-child { border-top: none; }
+  .my-req-row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .my-req-song { font-weight: 600; flex: 1 1 12em; min-width: 0; overflow-wrap: anywhere; }
+  .my-req-song .who { color: var(--muted); font-weight: 400; font-size: 13px; }
+  .my-req-stage {
+    font-size: 12px;
+    font-weight: 700;
+    padding: 2px 9px;
+    border-radius: 999px;
+    border: 1px solid currentColor;
+    white-space: nowrap;
+    color: var(--muted);
+  }
+  .my-req-stage.with_host { color: var(--next-color); }
+  .my-req-stage.queued    { color: var(--accent); }
+  .my-req-stage.up_next,
+  .my-req-stage.on_now    { color: var(--now-color); }
+  .my-req-stage.on_now    { background: var(--now-color); color: var(--bg); border-color: var(--now-color); }
+  .my-reqs li.sung        { opacity: 0.55; }
+  .my-req-host {
+    margin-top: 6px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    background: rgba(0, 156, 165, 0.14);
+    border-left: 3px solid var(--next-color);
+    font-size: 14px;
+    overflow-wrap: anywhere;
+  }
+  .my-req-host .from { color: var(--next-color); font-weight: 700; font-size: 12px; display: block; }
+  .my-req-host.new { animation: host-msg-in 1.2s ease-out 2; }
+  @keyframes host-msg-in { 50% { background: rgba(0, 156, 165, 0.4); } }
+  @media (prefers-reduced-motion: reduce) { .my-req-host.new { animation: none; } }
+
   @media (max-width: 560px) {
     body { padding: 16px; }
     .req-grid { grid-template-columns: 1fr; }
@@ -458,6 +511,12 @@
     </div>
     <p class="req-msg" id="req-msg" role="status" aria-live="polite"></p>
   </form>
+</section>
+
+<!-- This phone's requests tonight. Only shown once the phone has sent one. -->
+<section class="my-reqs" id="my-reqs" hidden aria-live="polite">
+  <div class="my-reqs-head">Your requests</div>
+  <ul id="my-reqs-list"></ul>
 </section>
 
 <div class="hero">
@@ -1187,6 +1246,7 @@
 
         save(NAME_KEY, singer);
         showMsg(res.duplicate ? res.error : `Sent! “${title}” for ${singer}. Want to request another?`, 'ok');
+        refreshMine();
         artistEl.value = titleEl.value = commentEl.value = '';
         keyEl.value = '0';
         selArtist = selSong = null;
@@ -1196,6 +1256,77 @@
         submitEl.disabled = false;
       }
     });
+
+    // ── "Your requests": where each of this phone's requests has got to, and
+    // messages from the host. Polls only once this phone has an id (it has
+    // sent a request), and only while the page is visible. ─────────────────
+    const mineEl = $('my-reqs'), mineList = $('my-reqs-list');
+    const SEEN_KEY = 'kt_seen_host_msgs';
+    let seenMsgs = {};
+    try { seenMsgs = JSON.parse(localStorage.getItem(SEEN_KEY) || '{}') || {}; } catch (_) {}
+
+    function aboutMins(secs) {
+      if (secs == null) return '';
+      const m = Math.round(secs / 60);
+      return m <= 1 ? ' · any minute' : ` · about ${m} min`;
+    }
+    function stageText(r) {
+      switch (r.stage) {
+        case 'sent':      return 'Sent';
+        case 'with_host': return 'With the host';
+        case 'queued':    return 'In the queue' + aboutMins(r.sings_in_secs);
+        case 'up_next':   return 'Up next!' + aboutMins(r.sings_in_secs);
+        case 'on_now':    return 'On stage now';
+        case 'sung':      return 'Sung — thanks!';
+        default:          return '';
+      }
+    }
+
+    let lastMine = '';
+    function renderMine(reqs) {
+      const key = JSON.stringify(reqs);
+      if (key === lastMine) return;
+      lastMine = key;
+      mineEl.hidden = reqs.length === 0;
+      let fresh = false;
+      mineList.innerHTML = reqs.map(r => {
+        const song = r.artist ? `${esc(r.title)} <span class="who">· ${esc(r.artist)}</span>` : esc(r.title);
+        let host = '';
+        if (r.message) {
+          const id = `${r.request_id}:${r.message.time}`;
+          const isNew = !seenMsgs[id];
+          if (isNew) { seenMsgs[id] = 1; fresh = true; }
+          host = `<div class="my-req-host${isNew ? ' new' : ''}"><span class="from">From the host</span>${esc(r.message.text)}</div>`;
+        }
+        return `<li class="${esc(r.stage)}">
+          <div class="my-req-row">
+            <span class="my-req-song">${song} <span class="who">for ${esc(r.singer)}</span></span>
+            <span class="my-req-stage ${esc(r.stage)}">${esc(stageText(r))}</span>
+          </div>${host}</li>`;
+      }).join('');
+      if (fresh) {
+        try { localStorage.setItem(SEEN_KEY, JSON.stringify(seenMsgs)); } catch (_) {}
+        if (navigator.vibrate) try { navigator.vibrate([120, 80, 120]); } catch (_) {}
+      }
+    }
+
+    let mineBusy = false;
+    async function refreshMine() {
+      const id = load(DEVICE_KEY);
+      if (!id || mineBusy) return;
+      mineBusy = true;
+      try {
+        const r = await fetch('/api/my-requests?device=' + encodeURIComponent(id), { cache: 'no-store' });
+        if (r.ok) renderMine((await r.json()).requests || []);
+      } catch (_) {
+        // Offline for a moment: keep showing the last list.
+      } finally {
+        mineBusy = false;
+      }
+    }
+    refreshMine();
+    setInterval(() => { if (!document.hidden) refreshMine(); }, 5000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshMine(); });
   })();
 </script>
 </body>

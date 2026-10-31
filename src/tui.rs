@@ -1,4 +1,5 @@
 use crate::config::Config;
+use crate::requests::{RequestStore, Stage, Tracked};
 use crate::server::{SharedConfig, StartupInfo};
 use anyhow::Result;
 use crossterm::{
@@ -191,6 +192,7 @@ define_fields! {
     RqContract => requests.contract_path, Text, true, "kroak-time request-source definition describing the API served to kroak-time. Copy the same file into kroak-time's request-sources folder.";
     RqMaxPending => requests.max_pending_per_device, Num, false, "Most waiting requests one phone can have at once. 0 = unlimited.";
     RqComment => requests.comment_field, Bool, false, "Show an optional free-text \"Comment\" box on the request form. Sent to kroak-time via the contract's {comment} placeholder.";
+    RqDupWindow => requests.duplicate_window_minutes, Num, false, "Minutes during which the same song is refused from the same phone or singer name (the singer is told it already reached you). Once sung, it can be requested again. 0 = allow repeats.";
 }
 
 // ── Tabs ────────────────────────────────────────────────────────────────────
@@ -285,6 +287,7 @@ const TABS: [Tab; 4] = [
             G("Form"),
             F(Key::RqComment, None),
             F(Key::RqMaxPending, None),
+            F(Key::RqDupWindow, None),
             F(Key::RqCatalog, None),
             F(Key::RqContract, None),
         ],
@@ -332,7 +335,7 @@ fn inactive(cfg: &Config, k: Key) -> Option<&'static str> {
         ShowRequestButton if cfg.requests.enabled => Some("always shown while phone requests are on"),
         RequestButtonUrl if cfg.requests.enabled => Some("ignored while phone requests are on"),
         RequestButtonText if !cfg.requests.enabled && !t.show_request_button => Some("button hidden"),
-        RqComment | RqMaxPending | RqCatalog | RqContract if !cfg.requests.enabled => Some("phone requests are off (Tonight)"),
+        RqComment | RqMaxPending | RqDupWindow | RqCatalog | RqContract if !cfg.requests.enabled => Some("phone requests are off (Tonight)"),
         TiktokButtonText | TiktokButtonUrl if !t.show_tiktok_live => Some("TikTok button is off (Tonight)"),
         SingerCount if t.show_all_singers => Some("overridden by show_all_singers"),
         ScColorProgress | ScProgressHeight if !t.show_song_progress => Some("song_progress is off (Tonight)"),
@@ -412,6 +415,11 @@ enum Mode {
     ListView { cursor: usize },
     ListEditing { cursor: usize, buffer: String, is_new: bool },
     ConfirmQuit,
+    /// Tonight's phone requests. The selection is a request id, not a row,
+    /// so a new request arriving at the top doesn't move it.
+    Singers { selected: Option<i64> },
+    /// Typing a message to whoever sent `request_id`.
+    Message { request_id: i64, buffer: String },
 }
 
 struct App {
@@ -422,7 +430,17 @@ struct App {
     mode: Mode,
     status: String,
     startup_info: Option<StartupInfo>,
+    store: RequestStore,
 }
+
+/// Ready-made replies, typed into the message box with F1–F5 (then Enter).
+const CANNED: [&str; 5] = [
+    "Got it — you're on the list!",
+    "Sorry, that one isn't in the catalog. Could you pick another?",
+    "Please come and see the host.",
+    "You're up soon — please be near the stage.",
+    "Sorry, we can't fit that one in tonight.",
+];
 
 impl App {
     /// The selected field on the current tab, as (key, label).
@@ -456,6 +474,7 @@ pub fn run(
     shutdown: Arc<Notify>,
     config_path: PathBuf,
     info_rx: Receiver<StartupInfo>,
+    store: RequestStore,
 ) -> Result<()> {
     let _guard = TerminalGuard::new()?;
     let backend = CrosstermBackend::new(io::stdout());
@@ -470,6 +489,7 @@ pub fn run(
         mode: Mode::Normal,
         status: "Loaded.".to_string(),
         startup_info: None,
+        store,
     };
 
     let result = event_loop(&mut terminal, &mut app, &shared_cfg, &config_path, &info_rx);
@@ -529,7 +549,7 @@ fn step(
     shared_cfg: &SharedConfig,
     config_path: &Path,
 ) -> Result<(Mode, bool)> {
-    let is_text_input = matches!(mode, Mode::Editing { .. } | Mode::ListEditing { .. });
+    let is_text_input = matches!(mode, Mode::Editing { .. } | Mode::ListEditing { .. } | Mode::Message { .. });
     if !is_text_input && key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
         return Ok(request_quit(app));
     }
@@ -638,10 +658,72 @@ fn step(
             _ => Ok((Mode::ListEditing { cursor, buffer, is_new }, false)),
         },
 
+        Mode::Singers { selected } => {
+            let list = app.store.recent();
+            let idx = selected.and_then(|id| list.iter().position(|t| t.request_id == id)).unwrap_or(0);
+            let id_at = |i: usize| list.get(i).map(|t| t.request_id);
+            let stay = Mode::Singers { selected: id_at(idx) };
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('m') => Ok((Mode::Normal, false)),
+                KeyCode::Up | KeyCode::Char('k') => Ok((Mode::Singers { selected: id_at(idx.saturating_sub(1)) }, false)),
+                KeyCode::Down | KeyCode::Char('j') => {
+                    Ok((Mode::Singers { selected: id_at((idx + 1).min(list.len().saturating_sub(1))) }, false))
+                }
+                KeyCode::Enter if !list.is_empty() => {
+                    let t = &list[idx];
+                    let buffer = t.message.as_ref().map(|m| m.text.clone()).unwrap_or_default();
+                    Ok((Mode::Message { request_id: t.request_id, buffer }, false))
+                }
+                KeyCode::Char('c') if list.get(idx).is_some_and(|t| t.message.is_some()) => {
+                    app.store.set_message(list[idx].request_id, "");
+                    app.status = format!("Message to {} cleared.", list[idx].singer);
+                    Ok((stay, false))
+                }
+                _ => Ok((stay, false)),
+            }
+        }
+
+        Mode::Message { request_id, mut buffer } => match key.code {
+            KeyCode::Esc => Ok((Mode::Singers { selected: Some(request_id) }, false)),
+            KeyCode::Enter => {
+                let who = app
+                    .store
+                    .recent()
+                    .into_iter()
+                    .find(|t| t.request_id == request_id)
+                    .map(|t| t.singer)
+                    .unwrap_or_else(|| "that singer".into());
+                app.status = if !app.store.set_message(request_id, &buffer) {
+                    "That request is too old to message.".into()
+                } else if buffer.trim().is_empty() {
+                    format!("Message to {who} cleared.")
+                } else {
+                    format!("Message sent to {who} — they'll see it while the page is open.")
+                };
+                Ok((Mode::Singers { selected: Some(request_id) }, false))
+            }
+            KeyCode::F(n @ 1..=5) => {
+                buffer = CANNED[n as usize - 1].to_string();
+                Ok((Mode::Message { request_id, buffer }, false))
+            }
+            KeyCode::Backspace => {
+                buffer.pop();
+                Ok((Mode::Message { request_id, buffer }, false))
+            }
+            KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
+                if buffer.chars().count() < crate::requests::MAX_COMMENT_LEN {
+                    buffer.push(c);
+                }
+                Ok((Mode::Message { request_id, buffer }, false))
+            }
+            _ => Ok((Mode::Message { request_id, buffer }, false)),
+        },
+
         Mode::Normal => {
             let count = tab_fields(&TABS[app.tab_idx]).len();
             match key.code {
                 KeyCode::Char('q') => Ok(request_quit(app)),
+                KeyCode::Char('m') => Ok((Mode::Singers { selected: None }, false)),
                 KeyCode::Tab | KeyCode::Right => {
                     app.tab_idx = (app.tab_idx + 1) % TABS.len();
                     Ok((Mode::Normal, false))
@@ -745,7 +827,111 @@ fn draw(f: &mut Frame, app: &App) {
             draw_list_popup(f, area, app, *cursor, Some((buffer.as_str(), *is_new)))
         }
         Mode::ConfirmQuit => draw_confirm_popup(f, area),
+        Mode::Singers { selected } => draw_singers_popup(f, area, app, *selected, None),
+        Mode::Message { request_id, buffer } => {
+            draw_singers_popup(f, area, app, Some(*request_id), Some(buffer.as_str()))
+        }
         Mode::Normal => {}
+    }
+}
+
+fn ago(secs: i64) -> String {
+    match secs.max(0) {
+        s @ 0..=59 => format!("{s}s"),
+        s @ 60..=3599 => format!("{}m", s / 60),
+        s => format!("{}h{:02}m", s / 3600, s % 3600 / 60),
+    }
+}
+
+fn stage_color(stage: Stage) -> Color {
+    match stage {
+        Stage::Sent => Color::Gray,
+        Stage::WithHost => Color::Cyan,
+        Stage::Queued => Color::Blue,
+        Stage::UpNext => Color::Yellow,
+        Stage::OnNow => Color::Green,
+        Stage::Sung => Color::DarkGray,
+    }
+}
+
+fn singer_row(t: &Tracked, now: i64, selected: bool) -> ListItem<'static> {
+    let base = if selected {
+        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    };
+    let song = if t.artist.is_empty() { t.title.clone() } else { format!("{} – {}", t.artist, t.title) };
+    let mut spans = vec![
+        Span::styled(format!("{:>6} ", ago(now - t.sent_at)), Style::default().fg(Color::DarkGray)),
+        Span::styled(format!("{} ", t.device_code), Style::default().fg(Color::DarkGray)),
+        Span::styled(format!("{:<22.22} ", t.singer), base),
+        Span::styled(format!("{:<10}", t.stage.label()), Style::default().fg(stage_color(t.stage))),
+        Span::styled(song, base),
+    ];
+    if let Some(m) = &t.message {
+        spans.push(Span::styled(format!("  ✉ {}", m.text), Style::default().fg(Color::Magenta)));
+    }
+    ListItem::new(Line::from(spans))
+}
+
+/// Tonight's phone requests, newest first, with a message box underneath
+/// while one is being written.
+fn draw_singers_popup(f: &mut Frame, area: Rect, app: &App, selected: Option<i64>, editing: Option<&str>) {
+    let list = app.store.recent();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or_default();
+    let idx = selected.and_then(|id| list.iter().position(|t| t.request_id == id)).unwrap_or(0);
+
+    let popup = centered_rect(92, 85, area);
+    f.render_widget(Clear, popup);
+    let edit_rows: u16 = if editing.is_some() { 5 } else { 0 };
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(3), Constraint::Length(edit_rows)])
+        .split(popup);
+
+    let items: Vec<ListItem> = if list.is_empty() {
+        vec![ListItem::new(Line::from(Span::styled(
+            "No phone requests in the last 12 hours.",
+            Style::default().fg(Color::DarkGray),
+        )))]
+    } else {
+        list.iter().enumerate().map(|(i, t)| singer_row(t, now, i == idx && editing.is_none())).collect()
+    };
+    let title = if editing.is_some() {
+        "Phone requests tonight".to_string()
+    } else {
+        format!("Phone requests tonight ({}) — ↑/↓ select · Enter message · c clear message · Esc back", list.len())
+    };
+    let mut state = ListState::default().with_selected((!list.is_empty()).then_some(idx));
+    f.render_stateful_widget(
+        List::new(items).block(Block::default().borders(Borders::ALL).title(title)),
+        rows[0],
+        &mut state,
+    );
+
+    if let Some(buf) = editing {
+        let who = list.get(idx).map(|t| format!("{} ({})", t.singer, t.title)).unwrap_or_default();
+        let gray = Style::default().fg(Color::DarkGray);
+        let canned: Vec<Span> = CANNED
+            .iter()
+            .enumerate()
+            .flat_map(|(i, c)| {
+                let short: String = c.chars().take(18).collect();
+                [Span::styled(format!("F{} ", i + 1), Style::default().fg(Color::Gray)), Span::styled(format!("{short}…  "), gray)]
+            })
+            .collect();
+        let lines = vec![
+            Line::from(format!("{buf}_")),
+            Line::from(""),
+            Line::from(canned),
+        ];
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(format!("Message to {who}  (Enter send · empty Enter clears · Esc cancel)"));
+        f.render_widget(Paragraph::new(lines).block(block).wrap(Wrap { trim: false }), rows[1]);
     }
 }
 
@@ -927,7 +1113,7 @@ fn draw_body(f: &mut Frame, area: Rect, app: &App) {
 fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
     let dirty_tag = if app.dirty { " [UNSAVED]" } else { "" };
     let text = format!(
-        "{}{}\n←/→ tab  ↑/↓ field  Enter edit/toggle  t/r/n quick toggles  s save  q quit",
+        "{}{}\n←/→ tab  ↑/↓ field  Enter edit/toggle  t/r/n quick toggles  m message singers  s save  q quit",
         app.status, dirty_tag
     );
     f.render_widget(Paragraph::new(text), area);
@@ -1062,7 +1248,7 @@ mod tests {
         seen.sort_by_key(|k| *k as usize);
         seen.dedup();
         assert_eq!(seen.len(), total, "a field appears on two tabs");
-        assert_eq!(total, Key::RqComment as usize + 1, "a field is missing from the tabs");
+        assert_eq!(total, Key::RqDupWindow as usize + 1, "a field is missing from the tabs");
     }
 
     #[test]

@@ -143,9 +143,12 @@ async fn main() -> Result<()> {
 
     let shared_cfg = Arc::new(RwLock::new(cfg));
     let shutdown = Arc::new(Notify::new());
+    // Shared by the server (singers, kroak-time) and the TUI (host messages).
+    let request_store = requests::RequestStore::load();
 
     if args.headless {
-        let mut server_task = tokio::spawn(server::run(shared_cfg.clone(), shutdown.clone(), None));
+        let mut server_task =
+            tokio::spawn(server::run(shared_cfg.clone(), shutdown.clone(), None, request_store));
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
                 shutdown.notify_one();
@@ -157,12 +160,13 @@ async fn main() -> Result<()> {
         server_task.await??;
     } else {
         let (info_tx, info_rx) = std::sync::mpsc::channel();
-        let server_task = tokio::spawn(server::run(shared_cfg.clone(), shutdown.clone(), Some(info_tx)));
+        let server_task =
+            tokio::spawn(server::run(shared_cfg.clone(), shutdown.clone(), Some(info_tx), request_store.clone()));
 
         let tui_cfg = shared_cfg.clone();
         let tui_shutdown = shutdown.clone();
         let tui_path = config_path.clone();
-        tokio::task::spawn_blocking(move || tui::run(tui_cfg, tui_shutdown, tui_path, info_rx))
+        tokio::task::spawn_blocking(move || tui::run(tui_cfg, tui_shutdown, tui_path, info_rx, request_store))
             .await
             .context("TUI thread panicked")??;
 

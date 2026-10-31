@@ -6,7 +6,7 @@ use crate::requests::{NewRequest, RequestStore, SubmitError, MAX_COMMENT_LEN, MA
 use crate::state::{fetch_state, KaraokeState};
 use anyhow::Result;
 use axum::{
-    extract::State,
+    extract::{Query, State},
     http::{header, HeaderMap, StatusCode},
     response::{Html, IntoResponse, Json, Response},
     routing::{get, post},
@@ -81,14 +81,18 @@ pub async fn run(
     cfg: SharedConfig,
     shutdown: Arc<Notify>,
     startup_info_tx: Option<std::sync::mpsc::Sender<StartupInfo>>,
+    request_store: RequestStore,
 ) -> Result<()> {
     let shared: SharedState = Arc::new(RwLock::new(None));
     let startup = cfg.read().unwrap().clone();
 
     // Background task: poll the upstream kroak-time API, re-reading the
-    // upstream URL and interval from the shared config every cycle.
+    // upstream URL and interval from the shared config every cycle. Each
+    // state also goes to the request store, so singers can follow their
+    // requests into the rotation and onto the stage.
     let poll_shared = shared.clone();
     let poll_cfg = cfg.clone();
+    let poll_store = request_store.clone();
 
     tokio::spawn(async move {
         loop {
@@ -98,6 +102,7 @@ pub async fn run(
             };
             match fetch_state(&upstream_url).await {
                 Ok(state) => {
+                    poll_store.observe(state.clone());
                     *poll_shared.write().unwrap() = Some(state);
                 }
                 Err(e) => {
@@ -108,11 +113,10 @@ pub async fn run(
         }
     });
 
-    // Song requests: the store, the catalog (loaded in the background so it's
-    // warm before the first singer opens the form), and the contract-driven
+    // Song requests: the catalog (loaded in the background so it's warm
+    // before the first singer opens the form), and the contract-driven
     // server kroak-time polls. Like `server.*`, whether that server runs is
     // decided once at startup.
-    let request_store = RequestStore::load();
     let catalog = CatalogStore::new();
     let request_server = if startup.requests.enabled {
         let warm = catalog.clone();
@@ -144,6 +148,8 @@ pub async fn run(
     let scroll_cfg = cfg.clone();
     let catalog_cfg = cfg.clone();
     let submit_cfg = cfg.clone();
+    let mine_cfg = cfg.clone();
+    let mine_store = request_store.clone();
 
     let app = Router::new()
         .route(
@@ -171,6 +177,14 @@ pub async fn run(
                 let cfg = submit_cfg.clone();
                 let store = request_store.clone();
                 async move { submit_handler(cfg, store, body) }
+            }),
+        )
+        .route(
+            "/api/my-requests",
+            get(move |Query(q): Query<MyRequestsQuery>| {
+                let enabled = mine_cfg.read().unwrap().requests.enabled;
+                let store = mine_store.clone();
+                async move { my_requests_handler(enabled, store, q) }
             }),
         )
         .route(
@@ -340,6 +354,31 @@ fn clean_to(s: &str, max_len: usize) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(max_len).collect()
 }
 
+fn clean_device_id(s: &str) -> String {
+    s.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').take(64).collect()
+}
+
+#[derive(Deserialize)]
+struct MyRequestsQuery {
+    #[serde(default)]
+    device: String,
+}
+
+/// `GET /api/my-requests?device=…`: tonight's requests from one phone, with
+/// where each has got to and any message from the host. The device id is a
+/// random secret kept on that phone, so it's what scopes the answer.
+fn my_requests_handler(enabled: bool, store: RequestStore, q: MyRequestsQuery) -> Response {
+    let device = clean_device_id(&q.device);
+    if !enabled || device.is_empty() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    (
+        [(header::CACHE_CONTROL, "no-store")],
+        Json(serde_json::json!({ "requests": store.for_device(&device) })),
+    )
+        .into_response()
+}
+
 /// `POST /api/request` from the singer page's request form.
 fn submit_handler(cfg: SharedConfig, store: RequestStore, body: RequestBody) -> Response {
     let (enabled, max_pending, comment_field, dup_window_secs) = {
@@ -360,12 +399,7 @@ fn submit_handler(cfg: SharedConfig, store: RequestStore, body: RequestBody) -> 
         return reply(StatusCode::BAD_REQUEST, serde_json::json!({ "ok": false, "error": "Please fill in your name and a song title." }));
     }
     let fingerprint: String = body.fingerprint.chars().filter(|c| c.is_ascii_alphanumeric()).take(64).collect();
-    let mut device_id: String = body
-        .device_id
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
-        .take(64)
-        .collect();
+    let mut device_id = clean_device_id(&body.device_id);
     if device_id.is_empty() {
         // No usable localStorage id (old browser / JS error) — fall back to
         // the fingerprint so the host still sees something stable.
