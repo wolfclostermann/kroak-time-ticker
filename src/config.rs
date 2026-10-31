@@ -442,6 +442,11 @@ pub struct RequestsConfig {
     /// even after it's gone. 0 = no duplicate check.
     #[serde(default = "default_duplicate_window_minutes")]
     pub duplicate_window_minutes: u64,
+
+    /// Ready-made messages to singers, filled into the TUI's message box
+    /// with F1, F2, ... (or Tab to cycle through them all).
+    #[serde(default = "default_host_replies")]
+    pub host_replies: Vec<String>,
 }
 
 impl Default for RequestsConfig {
@@ -453,6 +458,7 @@ impl Default for RequestsConfig {
             max_pending_per_device: default_max_pending_per_device(),
             comment_field: true,
             duplicate_window_minutes: default_duplicate_window_minutes(),
+            host_replies: default_host_replies(),
         }
     }
 }
@@ -465,6 +471,16 @@ fn default_max_pending_per_device() -> usize {
 }
 fn default_duplicate_window_minutes() -> u64 {
     360
+}
+fn default_host_replies() -> Vec<String> {
+    [
+        "Soz lad, can't get that one",
+        "Come see Wolf at the booth",
+        "You're coming up, get ready",
+        "I'm afraid there's no more room",
+    ]
+    .map(String::from)
+    .to_vec()
 }
 
 fn default_port() -> u16 {
@@ -648,4 +664,7 @@ const CONFIG_HEADER: &str = r##"# kroak-time-ticker configuration
 # comment_field = true       # Show an optional free-text "Comment" box on the request form.
 # duplicate_window_minutes = 360  # Refuse the same song again from the same phone or under
 #                             # the same singer name for this long (6 h = the night). 0 = off.
+# host_replies = ["Soz lad, can't get that one", "Come see Wolf at the booth"]
+#                             # Ready-made messages to singers: F1, F2, ... (or Tab to cycle)
+#                             # in the TUI's message box (press m, pick a request, Enter).
 "##;

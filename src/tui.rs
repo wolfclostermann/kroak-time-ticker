@@ -193,6 +193,7 @@ define_fields! {
     RqMaxPending => requests.max_pending_per_device, Num, false, "Most waiting requests one phone can have at once. 0 = unlimited.";
     RqComment => requests.comment_field, Bool, false, "Show an optional free-text \"Comment\" box on the request form. Sent to kroak-time via the contract's {comment} placeholder.";
     RqDupWindow => requests.duplicate_window_minutes, Num, false, "Minutes during which the same song is refused from the same phone or singer name (the singer is told it already reached you). Once sung, it can be requested again. 0 = allow repeats.";
+    RqReplies => requests.host_replies, List, false, "Ready-made messages to singers. In the message box (m, pick a request, Enter) F1, F2, ... fill one in, in this order, and Tab cycles through them all. Up to 200 characters each.";
 }
 
 // ── Tabs ────────────────────────────────────────────────────────────────────
@@ -290,6 +291,8 @@ const TABS: [Tab; 4] = [
             F(Key::RqDupWindow, None),
             F(Key::RqCatalog, None),
             F(Key::RqContract, None),
+            G("Messages to singers (press m)"),
+            F(Key::RqReplies, None),
         ],
     },
     Tab {
@@ -433,13 +436,11 @@ struct App {
     store: RequestStore,
 }
 
-/// Ready-made replies, typed into the message box with F1–F4 (then Enter).
-const CANNED: [&str; 4] = [
-    "Soz lad, can't get that one",
-    "Come see Wolf at the booth",
-    "You're coming up, get ready",
-    "I'm afraid there's no more room",
-];
+/// The ready-made replies (`requests.host_replies`), blank entries skipped.
+/// Read from the draft, so an edit is usable straight away, before saving.
+fn host_replies(app: &App) -> Vec<&str> {
+    app.draft.requests.host_replies.iter().map(|r| r.trim()).filter(|r| !r.is_empty()).collect()
+}
 
 impl App {
     /// The selected field on the current tab, as (key, label).
@@ -701,8 +702,25 @@ fn step(
                 };
                 Ok((Mode::Singers { selected: Some(request_id) }, false))
             }
-            KeyCode::F(n @ 1..=4) => {
-                buffer = CANNED[n as usize - 1].to_string();
+            KeyCode::F(n) => {
+                if let Some(r) = (n as usize).checked_sub(1).and_then(|i| host_replies(app).get(i).copied()) {
+                    buffer = r.to_string();
+                }
+                Ok((Mode::Message { request_id, buffer }, false))
+            }
+            KeyCode::Tab | KeyCode::BackTab => {
+                // Cycle from whichever reply is in the box (or from the start).
+                let replies = host_replies(app);
+                if !replies.is_empty() {
+                    let len = replies.len();
+                    let next = match replies.iter().position(|r| *r == buffer) {
+                        None if key.code == KeyCode::Tab => 0,
+                        None => len - 1,
+                        Some(i) if key.code == KeyCode::Tab => (i + 1) % len,
+                        Some(i) => (i + len - 1) % len,
+                    };
+                    buffer = replies[next].to_string();
+                }
                 Ok((Mode::Message { request_id, buffer }, false))
             }
             KeyCode::Backspace => {
@@ -885,7 +903,13 @@ fn draw_singers_popup(f: &mut Frame, area: Rect, app: &App, selected: Option<i64
 
     let popup = centered_rect(92, 85, area);
     f.render_widget(Clear, popup);
-    let edit_rows: u16 = if editing.is_some() { 5 } else { 0 };
+    let replies = host_replies(app);
+    // Borders + typed text + a gap + one line per ready-made reply, leaving
+    // at least half the popup for the request list.
+    let edit_rows: u16 = match editing {
+        Some(_) => (4 + replies.len() as u16).min(popup.height / 2).max(3),
+        None => 0,
+    };
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(3), Constraint::Length(edit_rows)])
@@ -913,23 +937,22 @@ fn draw_singers_popup(f: &mut Frame, area: Rect, app: &App, selected: Option<i64
 
     if let Some(buf) = editing {
         let who = list.get(idx).map(|t| format!("{} ({})", t.singer, t.title)).unwrap_or_default();
-        let gray = Style::default().fg(Color::DarkGray);
-        let canned: Vec<Span> = CANNED
-            .iter()
-            .enumerate()
-            .flat_map(|(i, c)| {
-                let short: String = c.chars().take(18).collect();
-                [Span::styled(format!("F{} ", i + 1), Style::default().fg(Color::Gray)), Span::styled(format!("{short}…  "), gray)]
-            })
-            .collect();
-        let lines = vec![
-            Line::from(format!("{buf}_")),
-            Line::from(""),
-            Line::from(canned),
-        ];
+        let mut lines = vec![Line::from(format!("{buf}_")), Line::from("")];
+        for (i, r) in replies.iter().enumerate() {
+            // F1–F12 exist; later replies are reached with Tab.
+            let key = if i < 12 { format!("F{:<3}", i + 1) } else { "Tab ".to_string() };
+            let style = if *r == buf { Style::default().fg(Color::Yellow) } else { Style::default().fg(Color::DarkGray) };
+            lines.push(Line::from(vec![Span::styled(key, Style::default().fg(Color::Gray)), Span::styled(r.to_string(), style)]));
+        }
+        if replies.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "No ready-made replies — add some under host_replies on the Requests tab.",
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(format!("Message to {who}  (Enter send · empty Enter clears · Esc cancel)"));
+            .title(format!("Message to {who}  (Enter send · F-key/Tab ready-made reply · empty Enter clears · Esc cancel)"));
         f.render_widget(Paragraph::new(lines).block(block).wrap(Wrap { trim: false }), rows[1]);
     }
 }
@@ -1247,7 +1270,7 @@ mod tests {
         seen.sort_by_key(|k| *k as usize);
         seen.dedup();
         assert_eq!(seen.len(), total, "a field appears on two tabs");
-        assert_eq!(total, Key::RqDupWindow as usize + 1, "a field is missing from the tabs");
+        assert_eq!(total, Key::RqReplies as usize + 1, "a field is missing from the tabs");
     }
 
     #[test]
@@ -1259,6 +1282,40 @@ mod tests {
         cfg.requests.enabled = false;
         assert!(inactive(&cfg, Key::RequestButtonUrl).is_none());
         assert!(inactive(&cfg, Key::RqCatalog).is_some());
+    }
+
+    #[test]
+    fn ready_made_replies_come_from_config() {
+        let mut cfg: Config = toml::from_str("").unwrap();
+        assert_eq!(cfg.requests.host_replies[0], "Soz lad, can't get that one");
+        cfg.requests.host_replies = vec!["One".into(), "  ".into(), "Two".into(), "Three".into()];
+        let shared: SharedConfig = Arc::new(std::sync::RwLock::new(cfg.clone()));
+        let mut app = App {
+            draft: cfg,
+            dirty: false,
+            tab_idx: 0,
+            cursor: [0; TABS.len()],
+            mode: Mode::Normal,
+            status: String::new(),
+            startup_info: None,
+            store: RequestStore::in_memory(),
+        };
+        let press = |app: &mut App, mode: Mode, code: KeyCode| -> String {
+            let key = KeyEvent::new(code, KeyModifiers::NONE);
+            match step(app, key, mode, &shared, Path::new("unused.toml")).unwrap().0 {
+                Mode::Message { buffer, .. } => buffer,
+                _ => panic!("left the message box"),
+            }
+        };
+        let msg = |b: &str| Mode::Message { request_id: 1, buffer: b.into() };
+
+        // Blank entries are skipped, so F2 is "Two".
+        assert_eq!(press(&mut app, msg("typed"), KeyCode::F(2)), "Two");
+        assert_eq!(press(&mut app, msg("typed"), KeyCode::F(9)), "typed");
+        assert_eq!(press(&mut app, msg(""), KeyCode::Tab), "One");
+        assert_eq!(press(&mut app, msg("Two"), KeyCode::Tab), "Three");
+        assert_eq!(press(&mut app, msg("Three"), KeyCode::Tab), "One");
+        assert_eq!(press(&mut app, msg("One"), KeyCode::BackTab), "Three");
     }
 
     #[test]
