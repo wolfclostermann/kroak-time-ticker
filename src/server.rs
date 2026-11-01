@@ -2,7 +2,7 @@ use crate::catalog::CatalogStore;
 use crate::config::Config;
 use crate::contract;
 use crate::ngrok_tunnel;
-use crate::requests::{NewRequest, RequestStore, SubmitError, MAX_COMMENT_LEN, MAX_FIELD_LEN};
+use crate::requests::{CancelError, NewRequest, RequestStore, SubmitError, MAX_COMMENT_LEN, MAX_FIELD_LEN};
 use crate::state::{fetch_state, KaraokeState};
 use anyhow::Result;
 use axum::{
@@ -150,6 +150,8 @@ pub async fn run(
     let submit_cfg = cfg.clone();
     let mine_cfg = cfg.clone();
     let mine_store = request_store.clone();
+    let (cancel_cfg, cancel_store) = (cfg.clone(), request_store.clone());
+    let (dismiss_cfg, dismiss_store) = (cfg.clone(), request_store.clone());
 
     let app = Router::new()
         .route(
@@ -185,6 +187,22 @@ pub async fn run(
                 let enabled = mine_cfg.read().unwrap().requests.enabled;
                 let store = mine_store.clone();
                 async move { my_requests_handler(enabled, store, q) }
+            }),
+        )
+        .route(
+            "/api/my-requests/cancel",
+            post(move |Json(body): Json<MyRequestAction>| {
+                let enabled = cancel_cfg.read().unwrap().requests.enabled;
+                let store = cancel_store.clone();
+                async move { cancel_handler(enabled, store, body) }
+            }),
+        )
+        .route(
+            "/api/my-requests/dismiss",
+            post(move |Json(body): Json<MyRequestAction>| {
+                let enabled = dismiss_cfg.read().unwrap().requests.enabled;
+                let store = dismiss_store.clone();
+                async move { dismiss_handler(enabled, store, body) }
             }),
         )
         .route(
@@ -377,6 +395,55 @@ fn my_requests_handler(enabled: bool, store: RequestStore, q: MyRequestsQuery) -
         Json(serde_json::json!({ "requests": store.for_device(&device) })),
     )
         .into_response()
+}
+
+#[derive(Deserialize)]
+struct MyRequestAction {
+    #[serde(default)]
+    device: String,
+    #[serde(default)]
+    request_id: i64,
+}
+
+/// `POST /api/my-requests/cancel` `{device, request_id}`: the singer
+/// removing one of their own requests (the × on "Your requests").
+fn cancel_handler(enabled: bool, store: RequestStore, body: MyRequestAction) -> Response {
+    let device = clean_device_id(&body.device);
+    if !enabled || device.is_empty() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let reply = |status: StatusCode, v: serde_json::Value| (status, Json(v)).into_response();
+    match store.cancel(&device, body.request_id) {
+        Ok(c) => {
+            if c.was_taken {
+                tracing::warn!(
+                    "{} cancelled request #{} “{}” after kroak-time took it — remove it there by hand",
+                    c.singer, body.request_id, c.title
+                );
+            } else {
+                tracing::info!("{} cancelled request #{} “{}” before kroak-time took it", c.singer, body.request_id, c.title);
+            }
+            reply(StatusCode::OK, serde_json::json!({ "ok": true }))
+        }
+        Err(CancelError::NotFound) => reply(
+            StatusCode::NOT_FOUND,
+            serde_json::json!({ "ok": false, "error": "That request isn't there any more." }),
+        ),
+        Err(CancelError::AlreadySung) => reply(
+            StatusCode::CONFLICT,
+            serde_json::json!({ "ok": false, "error": "That one's already been on stage." }),
+        ),
+    }
+}
+
+/// `POST /api/my-requests/dismiss` `{device, request_id}`: the singer closing
+/// a message from the host.
+fn dismiss_handler(enabled: bool, store: RequestStore, body: MyRequestAction) -> Response {
+    let device = clean_device_id(&body.device);
+    if !enabled || device.is_empty() || !store.dismiss_message(&device, body.request_id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    Json(serde_json::json!({ "ok": true })).into_response()
 }
 
 /// `POST /api/request` from the singer page's request form.

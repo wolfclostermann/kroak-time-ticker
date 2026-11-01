@@ -868,6 +868,7 @@ fn stage_color(stage: Stage) -> Color {
         Stage::UpNext => Color::Yellow,
         Stage::OnNow => Color::Green,
         Stage::Sung => Color::DarkGray,
+        Stage::Cancelled => Color::Red,
     }
 }
 
@@ -886,7 +887,9 @@ fn singer_row(t: &Tracked, now: i64, selected: bool) -> ListItem<'static> {
         Span::styled(song, base),
     ];
     if let Some(m) = &t.message {
-        spans.push(Span::styled(format!("  ✉ {}", m.text), Style::default().fg(Color::Magenta)));
+        // Dismissed = the singer read it and closed it on their phone.
+        let (mark, color) = if m.dismissed { ("✓ read", Color::DarkGray) } else { ("✉", Color::Magenta) };
+        spans.push(Span::styled(format!("  {mark} {}", m.text), Style::default().fg(color)));
     }
     ListItem::new(Line::from(spans))
 }

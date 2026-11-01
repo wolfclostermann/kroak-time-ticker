@@ -81,6 +81,9 @@ pub struct HostMessage {
     pub text: String,
     /// Unix seconds.
     pub time: i64,
+    /// The singer closed it on their phone. A new message starts unread.
+    #[serde(default)]
+    pub dismissed: bool,
 }
 
 /// A request that was accepted, kept after kroak-time has taken it (which
@@ -107,6 +110,9 @@ struct Sent {
     /// Was on stage and has since finished.
     #[serde(default)]
     sung: bool,
+    /// The singer removed it from their phone.
+    #[serde(default)]
+    cancelled: bool,
     #[serde(default)]
     message: Option<HostMessage>,
 }
@@ -124,6 +130,9 @@ impl Sent {
     }
 
     fn stage(&self, state: Option<&KaraokeState>) -> (Stage, Option<i64>) {
+        if self.cancelled {
+            return (Stage::Cancelled, None);
+        }
         if self.sung {
             return (Stage::Sung, None);
         }
@@ -175,11 +184,15 @@ pub enum Stage {
     UpNext,
     OnNow,
     Sung,
+    /// The singer removed it. kroak-time isn't told yet: if it had already
+    /// taken it, the host has to take it out by hand (the TUI shows these).
+    Cancelled,
 }
 
 impl Stage {
     pub fn label(self) -> &'static str {
         match self {
+            Stage::Cancelled => "CANCELLED",
             Stage::Sent => "sent",
             Stage::WithHost => "with host",
             Stage::Queued => "queued",
@@ -238,6 +251,23 @@ pub enum SubmitError {
     TooManyPending(usize),
     /// Same song already sent from this phone or under this singer name.
     Duplicate { singer: String, title: String, secs_ago: i64 },
+}
+
+#[derive(Debug, PartialEq)]
+pub enum CancelError {
+    /// Not this phone's, already removed, or too old to remember.
+    NotFound,
+    /// It's been on stage; nothing left to remove.
+    AlreadySung,
+}
+
+/// What a cancel removed, for the log.
+#[derive(Debug, PartialEq)]
+pub struct Cancelled {
+    pub singer: String,
+    pub title: String,
+    /// kroak-time had already taken it, so the host must remove it there.
+    pub was_taken: bool,
 }
 
 pub struct NewRequest {
@@ -304,7 +334,7 @@ impl RequestStore {
     pub fn observe(&self, state: KaraokeState) {
         let mut s = self.inner.write().unwrap();
         let mut changed = false;
-        for x in s.sent.iter_mut().filter(|x| !x.sung) {
+        for x in s.sent.iter_mut().filter(|x| !x.sung && !x.cancelled) {
             let current = state.current_singer.as_ref().is_some_and(|c| x.is(c));
             if current && state.is_playing && !x.on_stage {
                 x.on_stage = true;
@@ -321,9 +351,56 @@ impl RequestStore {
         *self.live.write().unwrap() = Some(state);
     }
 
-    /// The requests sent from one phone in the last `HISTORY_SECS`, newest first.
+    /// The requests sent from one phone in the last `HISTORY_SECS`, newest
+    /// first — minus ones it removed, and minus messages it dismissed.
     pub fn for_device(&self, device_id: &str) -> Vec<Tracked> {
-        self.tracked(unix_now(), |x| x.device_id == device_id)
+        let mut list = self.tracked(unix_now(), |x| x.device_id == device_id && !x.cancelled);
+        for t in &mut list {
+            if t.message.as_ref().is_some_and(|m| m.dismissed) {
+                t.message = None;
+            }
+        }
+        list
+    }
+
+    /// The singer removing one of their requests from their phone. If
+    /// kroak-time hasn't picked it up yet it never will; if it has, the
+    /// request shows as cancelled in the TUI for the host to take out.
+    pub fn cancel(&self, device_id: &str, request_id: i64) -> Result<Cancelled, CancelError> {
+        let mut s = self.inner.write().unwrap();
+        let x = s
+            .sent
+            .iter_mut()
+            .find(|x| x.request_id == request_id && x.device_id == device_id && !x.cancelled)
+            .ok_or(CancelError::NotFound)?;
+        if x.on_stage || x.sung {
+            return Err(CancelError::AlreadySung);
+        }
+        x.cancelled = true;
+        let was_taken = x.taken;
+        let info = Cancelled { singer: x.singer.clone(), title: x.title.clone(), was_taken };
+        if let Some(pos) = s.requests.iter().position(|r| r.request_id == request_id) {
+            s.requests.remove(pos);
+            bump_serial(&mut s);
+        }
+        self.persist(&s);
+        Ok(info)
+    }
+
+    /// The singer closing the host's message on their phone.
+    pub fn dismiss_message(&self, device_id: &str, request_id: i64) -> bool {
+        let mut s = self.inner.write().unwrap();
+        let Some(m) = s
+            .sent
+            .iter_mut()
+            .find(|x| x.request_id == request_id && x.device_id == device_id)
+            .and_then(|x| x.message.as_mut())
+        else {
+            return false;
+        };
+        m.dismissed = true;
+        self.persist(&s);
+        true
     }
 
     /// All requests from the last `HISTORY_SECS`, newest first.
@@ -350,7 +427,7 @@ impl RequestStore {
             return false;
         };
         let text: String = text.trim().chars().take(MAX_COMMENT_LEN).collect();
-        x.message = (!text.is_empty()).then(|| HostMessage { text, time: unix_now() });
+        x.message = (!text.is_empty()).then(|| HostMessage { text, time: unix_now(), dismissed: false });
         self.persist(&s);
         true
     }
@@ -387,10 +464,12 @@ impl RequestStore {
         let singer_key = norm(&req.singer);
         let song_key = format!("{}|{}", norm(&req.artist), norm(&req.title));
         s.sent.retain(|x| now - x.time < HISTORY_SECS.max(duplicate_window_secs));
-        // Once sung, asking for it again is a real new request.
+        // Once sung (or removed by the singer), asking for it again is a
+        // real new request.
         if let Some(prev) = s.sent.iter().find(|x| {
             now - x.time < duplicate_window_secs
                 && !x.sung
+                && !x.cancelled
                 && x.song_key == song_key
                 && (x.device_id == req.device_id || x.singer_key == singer_key)
         }) {
@@ -429,6 +508,7 @@ impl RequestStore {
             taken: false,
             on_stage: false,
             sung: false,
+            cancelled: false,
             message: None,
         });
         s.requests.push(r.clone());
@@ -641,5 +721,68 @@ mod tests {
         assert!(store.set_message(r.request_id, ""));
         assert!(store.tracked(1000, |x| x.device_id == "dev-a")[0].message.is_none());
         assert!(!store.set_message(9999, "hello"));
+    }
+
+    #[test]
+    fn cancelling_before_kroak_time_takes_it_withdraws_it() {
+        let store = RequestStore::in_memory();
+        let r = store.submit_at(new_req("dev-a"), 0, 6 * HOUR, 1000).unwrap();
+        let serial = store.serial();
+        // Another phone can't cancel it.
+        assert_eq!(store.cancel("dev-b", r.request_id).unwrap_err(), CancelError::NotFound);
+        let c = store.cancel("dev-a", r.request_id).unwrap();
+        assert!(!c.was_taken);
+        assert!(store.list().is_empty(), "kroak-time must never see it");
+        assert_ne!(store.serial(), serial);
+        // Gone from the phone, flagged for the host, and can be asked for again.
+        assert!(store.tracked(1000, |x| x.device_id == "dev-a" && !x.cancelled).is_empty());
+        assert_eq!(store.tracked(1000, |_| true)[0].stage, Stage::Cancelled);
+        assert!(store.submit_at(new_req("dev-a"), 0, 6 * HOUR, 1010).is_ok());
+        assert_eq!(store.cancel("dev-a", r.request_id).unwrap_err(), CancelError::NotFound);
+    }
+
+    #[test]
+    fn cancelling_after_kroak_time_took_it_is_flagged_and_sung_ones_cant_be() {
+        let store = RequestStore::in_memory();
+        let r = store.submit_at(new_req("dev-a"), 0, 6 * HOUR, 1000).unwrap();
+        store.delete(r.request_id);
+        assert!(store.cancel("dev-a", r.request_id).unwrap().was_taken);
+
+        let mut other = new_req("dev-a");
+        other.title = "Use Somebody".into();
+        let r2 = store.submit_at(other, 0, 6 * HOUR, 1000).unwrap();
+        store.observe(state(Some(singer("Alice", "Use Somebody")), None, vec![], true));
+        assert_eq!(store.cancel("dev-a", r2.request_id).unwrap_err(), CancelError::AlreadySung);
+    }
+
+    #[test]
+    fn dismissed_messages_leave_the_phone_but_not_the_host_list() {
+        let store = RequestStore::in_memory();
+        let r = store.submit_at(new_req("dev-a"), 0, 6 * HOUR, 1000).unwrap();
+        assert!(!store.dismiss_message("dev-a", r.request_id), "nothing to dismiss yet");
+        store.set_message(r.request_id, "Come see Wolf");
+        assert!(!store.dismiss_message("dev-b", r.request_id));
+        assert!(store.dismiss_message("dev-a", r.request_id));
+        assert!(store.tracked(1000, |_| true)[0].message.as_ref().unwrap().dismissed);
+        // A new message starts unread.
+        store.set_message(r.request_id, "You're coming up");
+        assert!(!store.tracked(1000, |_| true)[0].message.as_ref().unwrap().dismissed);
+    }
+
+    #[test]
+    fn the_phone_list_hides_dismissed_messages_and_cancelled_requests() {
+        let store = RequestStore::in_memory();
+        let a = store.submit(new_req("dev-a"), 0, 6 * HOUR).unwrap();
+        let mut other = new_req("dev-a");
+        other.title = "Use Somebody".into();
+        let b = store.submit(other, 0, 6 * HOUR).unwrap();
+        store.set_message(a.request_id, "Come see Wolf");
+        assert!(store.for_device("dev-a").iter().any(|t| t.message.is_some()));
+        store.dismiss_message("dev-a", a.request_id);
+        store.cancel("dev-a", b.request_id).unwrap();
+        let mine = store.for_device("dev-a");
+        assert_eq!(mine.len(), 1);
+        assert!(mine[0].message.is_none());
+        assert_eq!(store.recent().len(), 2, "the host still sees both");
     }
 }
