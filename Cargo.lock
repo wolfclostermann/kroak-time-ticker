@@ -1425,6 +1425,7 @@ dependencies = [
  "ratatui",
  "redb",
  "reqwest",
+ "rustls",
  "serde",
  "serde_json",
  "tokio",

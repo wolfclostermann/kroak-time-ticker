@@ -21,6 +21,8 @@ anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ngrok = "0.19"
+# Only to name the TLS config type in our custom ngrok connector.
+rustls = { version = "0.23", default-features = false }
 url = "2"
 ratatui = "0.30.2"
 crossterm = "0.29.0"

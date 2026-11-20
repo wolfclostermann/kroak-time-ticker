@@ -25,7 +25,8 @@ use tower_http::cors::CorsLayer;
 pub type SharedConfig = Arc<RwLock<Config>>;
 type SharedState = Arc<RwLock<Option<KaraokeState>>>;
 
-/// URLs resolved once at startup (local IP lookup, ngrok tunnel). Either
+/// URLs resolved once at startup (local IP lookup), plus the ngrok tunnel's
+/// state. Either
 /// printed directly (headless) or handed to the TUI to show in its status
 /// pane, since the TUI owns the terminal and raw `println!`/log output
 /// would corrupt its display.
@@ -37,12 +38,9 @@ pub struct StartupInfo {
     pub local_api_url: String,
     pub lan_dashboard_url: String,
     pub lan_scroll_url: String,
-    pub ngrok_dashboard_url: Option<String>,
-    pub ngrok_scroll_url: Option<String>,
-    /// Set when `[ngrok]` is enabled but the tunnel failed to connect/start —
-    /// distinct from the `ngrok_*_url` fields just being `None` because
-    /// ngrok is disabled.
-    pub ngrok_error: Option<String>,
+    /// Live, unlike the rest: the tunnel reconnects by itself after a network
+    /// drop, and its URL can change if it has to start a fresh session.
+    pub ngrok: ngrok_tunnel::SharedNgrokState,
     /// `None` when `[requests]` is disabled; otherwise the address kroak-time
     /// should poll, or why the request contract couldn't be loaded.
     pub request_server: Option<std::result::Result<String, String>>,
@@ -209,12 +207,7 @@ pub async fn run(
     } else {
         &startup.server.bind_address
     };
-    let ngrok_status = ngrok_tunnel::start(&startup.ngrok, forward_host, startup.server.port).await;
-    let (ngrok_dashboard_url, ngrok_scroll_url, ngrok_error) = match &ngrok_status {
-        ngrok_tunnel::NgrokStatus::Disabled => (None, None, None),
-        ngrok_tunnel::NgrokStatus::Running(t) => (Some(format!("{}/", t.url)), Some(format!("{}/scroll", t.url)), None),
-        ngrok_tunnel::NgrokStatus::Failed(e) => (None, None, Some(e.clone())),
-    };
+    let ngrok = ngrok_tunnel::spawn(&startup.ngrok, forward_host, startup.server.port);
 
     let local_ip = get_local_ip().unwrap_or_else(|| "<your-machine-ip>".to_string());
     let port = startup.server.port;
@@ -225,9 +218,7 @@ pub async fn run(
         local_api_url: format!("http://localhost:{port}/api/state"),
         lan_dashboard_url: format!("http://{local_ip}:{port}/"),
         lan_scroll_url: format!("http://{local_ip}:{port}/scroll"),
-        ngrok_dashboard_url,
-        ngrok_scroll_url,
-        ngrok_error,
+        ngrok,
         request_server,
     };
 
@@ -235,7 +226,17 @@ pub async fn run(
         Some(tx) => {
             let _ = tx.send(info);
         }
-        None => print_startup_info(&info),
+        None => {
+            // Headless prints once, so give the tunnel a moment to come up
+            // first; later changes are logged.
+            for _ in 0..100 {
+                if !matches!(*info.ngrok.read().unwrap(), ngrok_tunnel::NgrokState::Connecting { error: None }) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            print_startup_info(&info)
+        }
     }
 
     axum::serve(listener, app)
@@ -257,14 +258,23 @@ fn print_startup_info(info: &StartupInfo) {
     println!("  From other machines on your network:");
     println!("  Dashboard :  {}", info.lan_dashboard_url);
     println!("  OBS Scroll:  {}", info.lan_scroll_url);
-    if let Some(ngrok_url) = &info.ngrok_dashboard_url {
-        println!();
-        println!("  From anywhere via ngrok:");
-        println!("  Dashboard :  {ngrok_url}");
-        println!("  OBS Scroll:  {}", info.ngrok_scroll_url.as_deref().unwrap_or(""));
-    } else if let Some(err) = &info.ngrok_error {
-        println!();
-        println!("  ⚠ ngrok is enabled but could not connect: {err}");
+    match &*info.ngrok.read().unwrap() {
+        ngrok_tunnel::NgrokState::Disabled => {}
+        ngrok_tunnel::NgrokState::Online { url } => {
+            println!();
+            println!("  From anywhere via ngrok:");
+            println!("  Dashboard :  {url}/");
+            println!("  OBS Scroll:  {url}/scroll");
+        }
+        ngrok_tunnel::NgrokState::Connecting { error: Some(err) }
+        | ngrok_tunnel::NgrokState::Reconnecting { error: err, .. } => {
+            println!();
+            println!("  ⚠ ngrok could not connect ({err}) — retrying; the log will say when it's up.");
+        }
+        ngrok_tunnel::NgrokState::Connecting { error: None } => {
+            println!();
+            println!("  ngrok is still connecting — the log will say when it's up.");
+        }
     }
     match &info.request_server {
         Some(Ok(addr)) => {
