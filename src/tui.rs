@@ -1,5 +1,6 @@
 use crate::config::Config;
 use crate::requests::{RequestStore, Stage, Tracked};
+use crate::ngrok_tunnel::NgrokState;
 use crate::server::{SharedConfig, StartupInfo};
 use anyhow::Result;
 use crossterm::{
@@ -977,6 +978,43 @@ fn quick_toggle_line(app: &App) -> Line<'static> {
     Line::from(spans)
 }
 
+fn ngrok_line(state: &NgrokState) -> Line<'static> {
+    let label = |style: Style| Span::styled(format!("{:<11}", "ngrok"), style);
+    match state {
+        NgrokState::Disabled => Line::from(Span::styled(
+            format!("{:<11}disabled", "ngrok"),
+            Style::default().fg(Color::DarkGray),
+        )),
+        NgrokState::Online { url } => {
+            let ok = Style::default().fg(Color::Green);
+            Line::from(vec![
+                label(ok),
+                Span::styled(format!("{url}/"), ok),
+                Span::raw("    "),
+                Span::styled("Scroll  ", ok),
+                Span::styled(format!("{url}/scroll"), ok),
+            ])
+        }
+        NgrokState::Connecting { error: None } => {
+            let s = Style::default().fg(Color::Yellow);
+            Line::from(vec![label(s), Span::styled("connecting…", s)])
+        }
+        NgrokState::Connecting { error: Some(err) } => {
+            let s = Style::default().fg(Color::Red);
+            Line::from(vec![label(s), Span::styled(format!("⚠ not connected, retrying — {err}"), s)])
+        }
+        NgrokState::Reconnecting { url, since, error } => {
+            let s = Style::default().fg(Color::Red).add_modifier(Modifier::BOLD);
+            let secs = since.elapsed().as_secs();
+            let down = if secs < 60 { format!("{secs}s") } else { format!("{}m{:02}s", secs / 60, secs % 60) };
+            Line::from(vec![
+                label(s),
+                Span::styled(format!("⚠ DISCONNECTED {down}, reconnecting — {url}/ offline ({error})"), s),
+            ])
+        }
+    }
+}
+
 fn draw_status(f: &mut Frame, area: Rect, app: &App) {
     let mut lines = vec![quick_toggle_line(app)];
     match &app.startup_info {
@@ -999,24 +1037,7 @@ fn draw_status(f: &mut Frame, area: Rect, app: &App) {
                 Span::raw(info.lan_scroll_url.clone()),
             ]));
 
-            let ngrok_line = if let Some(url) = &info.ngrok_dashboard_url {
-                let ok = Style::default().fg(Color::Green);
-                Line::from(vec![
-                    Span::styled(format!("{:<11}", "ngrok"), ok),
-                    Span::styled(url.clone(), ok),
-                    Span::raw("    "),
-                    Span::styled("Scroll  ", ok),
-                    Span::styled(info.ngrok_scroll_url.clone().unwrap_or_default(), ok),
-                ])
-            } else if let Some(err) = &info.ngrok_error {
-                Line::from(Span::styled(
-                    format!("⚠ ngrok enabled but could not connect: {err}"),
-                    Style::default().fg(Color::Red),
-                ))
-            } else {
-                Line::from(Span::styled(format!("{:<11}disabled", "ngrok"), Style::default().fg(Color::DarkGray)))
-            };
-            lines.push(ngrok_line);
+            lines.push(ngrok_line(&info.ngrok.read().unwrap()));
 
             lines.push(Line::from(vec![label("Upstream"), Span::raw(info.upstream_url.clone())]));
 
