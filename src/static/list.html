@@ -408,13 +408,51 @@
   }
   .my-reqs[hidden] { display: none; }
   .my-reqs-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-height: 32px;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    font: inherit;
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--muted);
-    margin-bottom: 8px;
+    text-align: left;
   }
+  .my-reqs-head > span:first-child { flex: 1; }
+  .my-reqs-head[aria-expanded="true"] { margin-bottom: 6px; }
+  .my-reqs-chevron::before { content: "▾"; font-size: 14px; display: inline-block; transition: transform 0.2s; }
+  .my-reqs-head[aria-expanded="false"] .my-reqs-chevron::before { transform: rotate(-90deg); }
+  .my-reqs-badge {
+    background: var(--next-color);
+    color: var(--bg);
+    border-radius: 999px;
+    padding: 2px 8px;
+    letter-spacing: 0.04em;
+  }
+  .my-reqs-badge[hidden] { display: none; }
+  .my-reqs ul[hidden] { display: none; }
+  .my-req-x {
+    flex: none;
+    width: 32px;
+    height: 32px;
+    margin: -6px -8px -6px 0;
+    border: none;
+    border-radius: 50%;
+    background: none;
+    color: var(--muted);
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .my-req-x:hover, .my-req-x:focus-visible { background: var(--border); color: var(--text); }
+  .my-req-x:disabled { opacity: 0.4; cursor: wait; }
   .my-reqs ul { list-style: none; }
   .my-reqs li { padding: 8px 0; border-top: 1px solid var(--border); }
   .my-reqs li:first-child { border-top: none; }
@@ -437,8 +475,9 @@
   .my-req-stage.on_now    { background: var(--now-color); color: var(--bg); border-color: var(--now-color); }
   .my-reqs li.sung        { opacity: 0.55; }
   .my-req-host {
+    position: relative;
     margin-top: 6px;
-    padding: 8px 12px;
+    padding: 8px 40px 8px 12px;
     border-radius: 8px;
     background: rgba(0, 156, 165, 0.14);
     border-left: 3px solid var(--next-color);
@@ -446,6 +485,7 @@
     overflow-wrap: anywhere;
   }
   .my-req-host .from { color: var(--next-color); font-weight: 700; font-size: 12px; display: block; }
+  .my-req-host .my-req-x { position: absolute; top: 4px; right: 4px; margin: 0; }
   .my-req-host.new { animation: host-msg-in 1.2s ease-out 2; }
   @keyframes host-msg-in { 50% { background: rgba(0, 156, 165, 0.4); } }
   @media (prefers-reduced-motion: reduce) { .my-req-host.new { animation: none; } }
@@ -515,7 +555,11 @@
 
 <!-- This phone's requests tonight. Only shown once the phone has sent one. -->
 <section class="my-reqs" id="my-reqs" hidden aria-live="polite">
-  <div class="my-reqs-head">Your requests</div>
+  <button type="button" class="my-reqs-head" id="my-reqs-toggle" aria-expanded="true" aria-controls="my-reqs-list">
+    <span>Your requests <span id="my-reqs-count"></span></span>
+    <span class="my-reqs-badge" id="my-reqs-badge" hidden>New message</span>
+    <span class="my-reqs-chevron" aria-hidden="true"></span>
+  </button>
   <ul id="my-reqs-list"></ul>
 </section>
 
@@ -1282,12 +1326,33 @@
       }
     }
 
+    // Collapsed or not is remembered per phone. A new message from the host
+    // opens it again, so it can't be missed.
+    const toggleEl = $('my-reqs-toggle'), countEl = $('my-reqs-count'), badgeEl = $('my-reqs-badge');
+    const COLLAPSED_KEY = 'kt_my_reqs_collapsed';
+    let collapsed = false;
+    try { collapsed = localStorage.getItem(COLLAPSED_KEY) === '1'; } catch (_) {}
+    let unreadCount = 0;
+    function setCollapsed(c) {
+      collapsed = c;
+      toggleEl.setAttribute('aria-expanded', String(!c));
+      mineList.hidden = c;
+      badgeEl.hidden = !(c && unreadCount > 0);
+      try { localStorage.setItem(COLLAPSED_KEY, c ? '1' : '0'); } catch (_) {}
+    }
+    toggleEl.addEventListener('click', () => setCollapsed(!collapsed));
+
+    // A song can be removed until it's on stage.
+    const CANCELLABLE = new Set(['sent', 'with_host', 'queued', 'up_next']);
+
     let lastMine = '';
     function renderMine(reqs) {
       const key = JSON.stringify(reqs);
       if (key === lastMine) return;
       lastMine = key;
       mineEl.hidden = reqs.length === 0;
+      countEl.textContent = reqs.length ? `(${reqs.length})` : '';
+      unreadCount = reqs.filter(r => r.message).length;
       let fresh = false;
       mineList.innerHTML = reqs.map(r => {
         const song = r.artist ? `${esc(r.title)} <span class="who">· ${esc(r.artist)}</span>` : esc(r.title);
@@ -1296,19 +1361,54 @@
           const id = `${r.request_id}:${r.message.time}`;
           const isNew = !seenMsgs[id];
           if (isNew) { seenMsgs[id] = 1; fresh = true; }
-          host = `<div class="my-req-host${isNew ? ' new' : ''}"><span class="from">From the host</span>${esc(r.message.text)}</div>`;
+          host = `<div class="my-req-host${isNew ? ' new' : ''}"><span class="from">From the host</span>${esc(r.message.text)}
+            <button type="button" class="my-req-x" data-dismiss="${r.request_id}" aria-label="Dismiss message">×</button></div>`;
         }
+        const x = CANCELLABLE.has(r.stage)
+          ? `<button type="button" class="my-req-x" data-cancel="${r.request_id}" data-title="${esc(r.title)}" aria-label="Remove ${esc(r.title)}">×</button>`
+          : '';
         return `<li class="${esc(r.stage)}">
           <div class="my-req-row">
             <span class="my-req-song">${song} <span class="who">for ${esc(r.singer)}</span></span>
-            <span class="my-req-stage ${esc(r.stage)}">${esc(stageText(r))}</span>
+            <span class="my-req-stage ${esc(r.stage)}">${esc(stageText(r))}</span>${x}
           </div>${host}</li>`;
       }).join('');
       if (fresh) {
         try { localStorage.setItem(SEEN_KEY, JSON.stringify(seenMsgs)); } catch (_) {}
         if (navigator.vibrate) try { navigator.vibrate([120, 80, 120]); } catch (_) {}
+        if (collapsed) setCollapsed(false);
       }
+      setCollapsed(collapsed);
     }
+
+    async function postMine(path, requestId) {
+      const r = await fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device: load(DEVICE_KEY), request_id: requestId }),
+      });
+      return r.json().catch(() => ({}));
+    }
+
+    mineList.addEventListener('click', async e => {
+      const btn = e.target.closest('button.my-req-x');
+      if (!btn) return;
+      if (btn.dataset.cancel) {
+        if (!confirm(`Remove “${btn.dataset.title}” from your requests?`)) return;
+        btn.disabled = true;
+        try {
+          const res = await postMine('/api/my-requests/cancel', Number(btn.dataset.cancel));
+          if (!res.ok && res.error) alert(res.error);
+        } catch (_) {
+          alert('Couldn\'t reach the host — check your connection and try again.');
+        }
+      } else if (btn.dataset.dismiss) {
+        btn.closest('.my-req-host').remove(); // feels instant; the server catches up
+        try { await postMine('/api/my-requests/dismiss', Number(btn.dataset.dismiss)); } catch (_) {}
+      }
+      lastMine = '';
+      refreshMine();
+    });
 
     let mineBusy = false;
     async function refreshMine() {
